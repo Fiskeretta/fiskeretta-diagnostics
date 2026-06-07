@@ -37,6 +37,8 @@ MODULES = {
 POSITIVE_RESPONSE_OFFSET = 0x40  # UDS positive response service ID = request + 0x40
 
 _HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
+_FRAME_LINE = re.compile(r"^[0-9A-Fa-f]+:\s*(.+)$")
+_BARE_HEX = re.compile(r"^[0-9A-Fa-f]+$")
 
 
 class UdsError(Exception):
@@ -53,11 +55,40 @@ async def configure_addressing(session: ElmSession, request_id: int, response_id
 
 
 def _extract_payload_bytes(raw_reply: str) -> bytes:
-    """ELM327 (with CAN auto-formatting) returns the reassembled UDS payload
-    as hex digit pairs, possibly spread across lines/spaces — concatenate
-    every two-hex-digit run into raw bytes."""
-    hex_pairs = _HEX_PAIR.findall(raw_reply.replace("\r", " ").replace("\n", " "))
-    return bytes(int(pair, 16) for pair in hex_pairs)
+    """ELM327 (with CAN auto-formatting + long messages) prints multi-frame
+    UDS responses like:
+
+        014
+        0: 62 F1 90 56 43 46
+        1: 31 45 42 55 32 34 50
+        2: 47 30 30 37 39 37 30
+
+    — a bare hex byte count ("014" = 0x14 = 20 bytes) followed by one line
+    per ISO-TP frame, "<index>: <payload bytes>" with the PCI bytes already
+    stripped. We concatenate the frame lines in order and trust the byte
+    count to trim any trailing padding. Short single-frame replies have no
+    such header/index lines — we fall back to grabbing every hex byte pair.
+    """
+    lines = [ln.strip() for ln in raw_reply.replace("\r", "\n").split("\n") if ln.strip()]
+
+    frame_lines = []
+    declared_len = None
+    for ln in lines:
+        m = _FRAME_LINE.match(ln)
+        if m:
+            frame_lines.append(m.group(1))
+        elif " " not in ln and _BARE_HEX.match(ln):
+            declared_len = int(ln, 16)
+
+    source = frame_lines if frame_lines else lines
+    hex_pairs = []
+    for ln in source:
+        hex_pairs.extend(_HEX_PAIR.findall(ln))
+
+    payload = bytes(int(pair, 16) for pair in hex_pairs)
+    if declared_len is not None and declared_len <= len(payload):
+        payload = payload[:declared_len]
+    return payload
 
 
 async def read_data_by_identifier(
