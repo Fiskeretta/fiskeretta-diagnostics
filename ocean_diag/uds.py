@@ -38,9 +38,31 @@ MODULES = {
 
 POSITIVE_RESPONSE_OFFSET = 0x40  # UDS positive response service ID = request + 0x40
 
+# DTC status byte bits (ISO 14229-1 DTCStatusMask). Every ECU carries a large
+# table of *trackable* faults — most show up with only the "not completed /
+# not failed since last clear" bits (0x10/0x40/0x50) set, meaning that
+# particular check has simply never tripped. testFailed (currently failing)
+# and confirmedDTC (stored as a real, confirmed fault) are what a driver
+# would actually call a "trouble code".
+TEST_FAILED = 0x01
+CONFIRMED_DTC = 0x08
+NOTEWORTHY_STATUS_MASK = TEST_FAILED | CONFIRMED_DTC
+
 _HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
 _FRAME_LINE = re.compile(r"^[0-9A-Fa-f]+:\s*(.+)$")
 _BARE_HEX = re.compile(r"^[0-9A-Fa-f]+$")
+_ADAPTER_ERRORS = ("NO DATA", "ERROR", "UNABLE TO CONNECT", "STOPPED", "BUS INIT", "CAN ERROR")
+
+
+def _check_adapter_error(raw_reply: str) -> None:
+    """Raise a clear UdsError if the adapter answered with a textual status
+    (e.g. a sleeping module returning "NO DATA") instead of UDS bytes —
+    otherwise stray hex-looking letters in those strings ("DA" in "NO DATA")
+    can get misread as payload bytes."""
+    upper = raw_reply.upper()
+    for err in _ADAPTER_ERRORS:
+        if err in upper:
+            raise UdsError(f"adapter says: {raw_reply.strip()!r}")
 
 
 class UdsError(Exception):
@@ -108,6 +130,7 @@ async def read_data_by_identifier(
     raw_reply = await session.send(request, timeout=10.0)
     if log:
         log(f"  {request:10s} -> {raw_reply!r}")
+    _check_adapter_error(raw_reply)
 
     payload = _extract_payload_bytes(raw_reply)
     expected_service = 0x22 + POSITIVE_RESPONSE_OFFSET
@@ -142,6 +165,13 @@ class Dtc:
     def code_hex(self) -> str:
         return f"{self.code:06X}"
 
+    @property
+    def is_noteworthy(self) -> bool:
+        """Currently failing or confirmed — the codes a driver would
+        actually care about, vs. the hundreds of "monitor never run"
+        entries every ECU's full DTC table carries."""
+        return bool(self.status & NOTEWORTHY_STATUS_MASK)
+
     def __str__(self) -> str:
         return f"0x{self.code_hex} (status 0x{self.status:02X})"
 
@@ -165,6 +195,7 @@ async def read_dtcs(
     raw_reply = await session.send(request, timeout=10.0)
     if log:
         log(f"  {request:10s} -> {raw_reply!r}")
+    _check_adapter_error(raw_reply)
 
     payload = _extract_payload_bytes(raw_reply)
     if len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x19:
@@ -194,9 +225,11 @@ async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None) -> dict:
             dtcs = await read_dtcs(session, request_id, response_id, log=log)
             report[name] = dtcs
             if log:
+                noteworthy = [d for d in dtcs if d.is_noteworthy]
+                for dtc in noteworthy:
+                    log(f"  {name.upper()}: {dtc}  <-- confirmed/active")
                 if dtcs:
-                    for dtc in dtcs:
-                        log(f"  {name.upper()}: {dtc}")
+                    log(f"  {name.upper()}: {len(dtcs)} DTC(s) in module's table, {len(noteworthy)} confirmed/active")
                 else:
                     log(f"  {name.upper()}: no DTCs stored")
         except (UdsError, asyncio.TimeoutError) as exc:

@@ -91,12 +91,15 @@ async def run_read_dtcs(log: core.Log) -> None:
         return
 
     report = await uds.read_all_dtcs_from_device(device, log)
-    total = sum(len(dtcs) for dtcs in report.values() if dtcs)
+    all_dtcs = [dtc for dtcs in report.values() if dtcs for dtc in dtcs]
+    noteworthy = [dtc for dtc in all_dtcs if dtc.is_noteworthy]
     log("")
-    if total == 0:
+    if not all_dtcs:
         log("No DTCs found on any queried module.")
+    elif not noteworthy:
+        log(f"{len(all_dtcs)} DTC table entries seen, but none confirmed/active — nothing to worry about.")
     else:
-        log(f"Found {total} DTC(s) total — see per-module results above.")
+        log(f"{len(noteworthy)} confirmed/active DTC(s) out of {len(all_dtcs)} table entries — see lines marked '<-- confirmed/active' above.")
 
 
 def build_app() -> web.Application:
