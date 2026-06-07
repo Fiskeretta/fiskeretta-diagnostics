@@ -92,14 +92,16 @@ async def run_read_dtcs(log: core.Log) -> None:
 
     report = await uds.read_all_dtcs_from_device(device, log)
     all_dtcs = [dtc for dtcs in report.values() if dtcs for dtc in dtcs]
-    noteworthy = [dtc for dtc in all_dtcs if dtc.is_noteworthy]
+    failing_now = [dtc for dtc in all_dtcs if dtc.is_failing_now]
+    confirmed = [dtc for dtc in all_dtcs if dtc.is_confirmed]
     log("")
     if not all_dtcs:
         log("No DTCs found on any queried module.")
-    elif not noteworthy:
-        log(f"{len(all_dtcs)} DTC table entries seen, but none confirmed/active — nothing to worry about.")
+    elif not confirmed:
+        log(f"{len(all_dtcs)} DTC table entries seen, none confirmed — nothing to worry about.")
     else:
-        log(f"{len(noteworthy)} confirmed/active DTC(s) out of {len(all_dtcs)} table entries — see lines marked '<-- confirmed/active' above.")
+        log(f"{len(failing_now)} failing right now, {len(confirmed)} confirmed (may be historical), out of {len(all_dtcs)} table entries.")
+        log("'FAILING NOW' is the actionable list — 'confirmed' codes persist until cleared even if the underlying issue resolved.")
 
 
 def build_app() -> web.Application:

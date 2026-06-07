@@ -166,6 +166,18 @@ class Dtc:
         return f"{self.code:06X}"
 
     @property
+    def is_failing_now(self) -> bool:
+        """testFailed bit set — actively failing as of the most recent test."""
+        return bool(self.status & TEST_FAILED)
+
+    @property
+    def is_confirmed(self) -> bool:
+        """confirmedDTC bit set — stored as a real fault. Stays set until the
+        DTC memory is cleared, so this includes historical faults that
+        aren't necessarily still happening."""
+        return bool(self.status & CONFIRMED_DTC)
+
+    @property
     def is_noteworthy(self) -> bool:
         """Currently failing or confirmed — the codes a driver would
         actually care about, vs. the hundreds of "monitor never run"
@@ -225,11 +237,15 @@ async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None) -> dict:
             dtcs = await read_dtcs(session, request_id, response_id, log=log)
             report[name] = dtcs
             if log:
-                noteworthy = [d for d in dtcs if d.is_noteworthy]
-                for dtc in noteworthy:
-                    log(f"  {name.upper()}: {dtc}  <-- confirmed/active")
+                for dtc in dtcs:
+                    if dtc.is_failing_now:
+                        log(f"  {name.upper()}: {dtc}  <-- FAILING NOW")
+                    elif dtc.is_confirmed:
+                        log(f"  {name.upper()}: {dtc}  <-- confirmed (historical)")
                 if dtcs:
-                    log(f"  {name.upper()}: {len(dtcs)} DTC(s) in module's table, {len(noteworthy)} confirmed/active")
+                    failing_now = sum(1 for d in dtcs if d.is_failing_now)
+                    confirmed = sum(1 for d in dtcs if d.is_confirmed)
+                    log(f"  {name.upper()}: {len(dtcs)} DTC(s) in module's table — {failing_now} failing now, {confirmed} confirmed")
                 else:
                     log(f"  {name.upper()}: no DTCs stored")
         except (UdsError, asyncio.TimeoutError) as exc:
