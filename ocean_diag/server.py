@@ -43,7 +43,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         except (json.JSONDecodeError, AttributeError):
             continue
 
-        if command in ("scan_and_connect", "read_vin", "read_dtcs"):
+        if command in ("scan_and_connect", "read_vin", "read_dtcs", "drill_failing"):
             if _busy_lock.locked():
                 await ws.send_json({"type": "log", "message": "Already running a BLE operation — wait for it to finish."})
                 continue
@@ -54,8 +54,10 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                         await run_scan_and_connect(log)
                     elif command == "read_vin":
                         await run_read_vin(log)
-                    else:
+                    elif command == "read_dtcs":
                         await run_read_dtcs(log)
+                    else:
+                        await run_drill_failing(log)
                 finally:
                     await ws.send_json({"type": "status", "value": "idle"})
 
@@ -102,6 +104,12 @@ async def run_read_dtcs(log: core.Log) -> None:
     else:
         log(f"{len(failing_now)} failing right now, {len(confirmed)} confirmed (may be historical), out of {len(all_dtcs)} table entries.")
         log("'FAILING NOW' is the actionable list — 'confirmed' codes persist until cleared even if the underlying issue resolved.")
+
+
+async def run_drill_failing(log: core.Log) -> None:
+    device = await find_vlinker(log)
+    if device:
+        await uds.drill_failing_dtcs_from_device(device, log)
 
 
 def build_app() -> web.Application:

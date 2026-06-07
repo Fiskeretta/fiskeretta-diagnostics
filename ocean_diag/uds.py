@@ -14,6 +14,7 @@ Gateway at 0x7C2/0x7CA) come from the FOA community's `puddletools/CAN`
 import asyncio
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 from bleak import BleakClient
@@ -225,6 +226,75 @@ async def read_dtcs(
     return dtcs
 
 
+async def read_dtc_extended_data(
+    session: ElmSession,
+    request_id: int,
+    response_id: int,
+    dtc_code: int,
+    record: int = 0xFF,
+    log: Optional[Log] = None,
+) -> bytes:
+    """UDS service 0x19 sub-function 0x06 (reportDTCExtendedDataRecordByDTCNumber):
+    ask one module for the extended data attached to a single DTC. Record 0xFF
+    means "all records". ECUs typically store an occurrence counter and aging
+    info here, but the per-record layout is manufacturer-defined, so we return
+    everything after the status byte as raw bytes for the caller to dump.
+
+    Response: 59 06 <DTC_hi> <DTC_mid> <DTC_lo> <statusOfDTC> [<recNum> <data>...]
+    """
+    request = f"1906{dtc_code:06X}{record:02X}"
+    raw_reply = await session.send(request, timeout=10.0)
+    if log:
+        log(f"  {request:12s} -> {raw_reply!r}")
+    _check_adapter_error(raw_reply)
+
+    payload = _extract_payload_bytes(raw_reply)
+    if len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x19:
+        raise UdsError(f"negative response (NRC 0x{payload[2]:02X})")
+
+    expected_service = 0x19 + POSITIVE_RESPONSE_OFFSET
+    if len(payload) < 6 or payload[0] != expected_service or payload[1] != 0x06:
+        raise UdsError(f"unexpected response to extended-data read: {payload.hex()}")
+
+    # payload[2:5] echoes the DTC, payload[5] is statusOfDTC; the rest is the
+    # extended-data records.
+    return bytes(payload[6:])
+
+
+async def read_dtc_snapshot(
+    session: ElmSession,
+    request_id: int,
+    response_id: int,
+    dtc_code: int,
+    record: int = 0xFF,
+    log: Optional[Log] = None,
+) -> bytes:
+    """UDS service 0x19 sub-function 0x04 (reportDTCSnapshotRecordByDTCNumber):
+    ask one module for the freeze-frame snapshot(s) captured when a DTC set —
+    sensor values at the moment of the fault. Record 0xFF means "all records".
+    The DID layout is manufacturer-defined, so we return everything after the
+    status byte raw.
+
+    Response: 59 04 <DTC_hi> <DTC_mid> <DTC_lo> <statusOfDTC>
+              [<recNum> <numIdentifiers> [<DID_hi> <DID_lo> <data>...]...]
+    """
+    request = f"1904{dtc_code:06X}{record:02X}"
+    raw_reply = await session.send(request, timeout=10.0)
+    if log:
+        log(f"  {request:12s} -> {raw_reply!r}")
+    _check_adapter_error(raw_reply)
+
+    payload = _extract_payload_bytes(raw_reply)
+    if len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x19:
+        raise UdsError(f"negative response (NRC 0x{payload[2]:02X})")
+
+    expected_service = 0x19 + POSITIVE_RESPONSE_OFFSET
+    if len(payload) < 6 or payload[0] != expected_service or payload[1] != 0x04:
+        raise UdsError(f"unexpected response to snapshot read: {payload.hex()}")
+
+    return bytes(payload[6:])
+
+
 async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None) -> dict:
     """Query every known module for its DTCs. A module that doesn't answer
     (unsupported service, no response, etc.) maps to None rather than
@@ -271,6 +341,136 @@ async def read_all_dtcs_from_device(device: BLEDevice, log: Log) -> dict:
                 log(f"  {cmd:10s} -> {reply!r}")
 
             return await read_all_dtcs(session, log)
+
+
+# Snapshot DID data lengths (bytes after the 2-byte DID tag), decoded by hand
+# from real freeze-frames. 0xEFF6-0xEFF9 are global/environmental fields shared
+# across modules; 0x148x are MCU-specific. Lengths verified against captured
+# data (records segment with zero leftover bytes).
+SNAPSHOT_DID_LEN = {
+    0xEFF9: 2, 0xEFF6: 6, 0xEFF8: 4, 0xEFF7: 2,
+    0x1485: 4, 0x1484: 5, 0x1486: 1, 0x1487: 8,
+    0x1488: 8, 0x1489: 3, 0x148A: 1, 0x148B: 1,
+}
+
+
+def _odometer_miles(raw: bytes) -> float:
+    """EFF8 is the odometer in units of 10 m (value / 100 = km), confirmed
+    against the car's dash reading."""
+    return int.from_bytes(raw, "big") / 100 * 0.621371
+
+
+def _format_timestamp(raw: bytes) -> str:
+    """EFF6 = [year-2015, month(0-indexed), day(0-indexed), hour, minute, second], UTC.
+
+    Epoch (2015), 0-indexed month AND day, and UTC were all confirmed by
+    calibration: the latest capture decodes to the owner's exact last-drive
+    instant and odometer (2026-06-06 18:00 PDT @ 14,072 mi) once the stored
+    UTC value is shifted to local time. We render UTC plus the machine's
+    local time."""
+    yy, mo, dd, hh, mi, ss = raw
+    try:
+        dt = datetime(2015 + yy, mo + 1, dd + 1, hh, mi, ss, tzinfo=timezone.utc)
+    except ValueError:
+        return f"raw {yy:02d} {mo:02d} {dd:02d} {hh:02d}:{mi:02d}:{ss:02d}"
+    local = dt.astimezone()
+    return f"{dt:%Y-%m-%d %H:%M:%S} UTC ({local:%Y-%m-%d %H:%M:%S %Z})"
+
+
+def _format_snapshot(data: bytes) -> list[str]:
+    """Pretty-print a freeze-frame payload (everything after 59 04 <DTC> <status>)
+    into per-record, per-DID lines, decoding the odometer and timestamp. Falls
+    back to a raw dump the moment it meets a DID whose length we don't know."""
+    lines: list[str] = []
+    i, n = 0, len(data)
+    first = True
+    while i < n:
+        if not first:  # records after the first are zero-padded to a fixed size
+            while i < n and data[i] == 0x00:
+                i += 1
+            if i >= n:
+                break
+        first = False
+        if i + 2 > n:
+            break
+        rec, nid = data[i], data[i + 1]
+        i += 2
+        lines.append(f"    record {rec}: {nid} field(s)")
+        for _ in range(nid):
+            if i + 2 > n:
+                lines.append("      (truncated)")
+                return lines
+            did = (data[i] << 8) | data[i + 1]
+            i += 2
+            length = SNAPSHOT_DID_LEN.get(did)
+            if length is None:
+                lines.append(f"      DID 0x{did:04X}: unknown layout — raw tail {data[i:].hex(' ')}")
+                return lines
+            val = data[i:i + length]
+            i += length
+            if did == 0xEFF8:
+                lines.append(f"      odometer (EFF8): {_odometer_miles(val):,.0f} mi")
+            elif did == 0xEFF6:
+                ts = "(unset)" if val == b"\x00" * 6 else _format_timestamp(val)
+                lines.append(f"      timestamp (EFF6): {ts}")
+            else:
+                lines.append(f"      DID 0x{did:04X}: {val.hex(' ')}")
+    return lines
+
+
+async def drill_failing_dtcs_from_device(device: BLEDevice, log: Log) -> None:
+    """Connect, find every currently-failing DTC, then ask its module for the
+    extended data (occurrence counter / aging) and freeze-frame snapshot —
+    the deepest the car will tell us about a fault over standard UDS."""
+    log(f"Connecting to {device.name} ({device.address})...")
+    async with BleakClient(device) as client:
+        write_char, notify_char = core.find_uart_pair(client)
+        if not write_char or not notify_char:
+            log("Couldn't auto-detect a write+notify characteristic pair.")
+            return
+
+        async with ElmSession(client, write_char, notify_char) as session:
+            log("Setting up adapter (reset, echo off, force ISO 15765-4 CAN, auto-format, allow long messages)...")
+            for cmd in ("ATZ", "ATE0", "ATSP6", "ATCAF1", "ATAL"):
+                reply = await session.send(cmd)
+                log(f"  {cmd:10s} -> {reply!r}")
+
+            log("Scanning all modules for currently-failing DTCs...")
+            report = await read_all_dtcs(session, log=None)
+            failing = [
+                (name, dtc)
+                for name, dtcs in report.items()
+                if dtcs
+                for dtc in dtcs
+                if dtc.is_failing_now
+            ]
+            if not failing:
+                log("No currently-failing DTCs to drill into.")
+                return
+
+            log(f"Found {len(failing)} failing DTC(s). Fetching extended data + freeze-frame for each:")
+            for name, dtc in failing:
+                request_id, response_id = MODULES[name]
+                log("")
+                log(f"=== {name.upper()}  {dtc} ===")
+                await configure_addressing(session, request_id, response_id, log)
+
+                try:
+                    ext = await read_dtc_extended_data(session, request_id, response_id, dtc.code, log=log)
+                    log(f"  extended data: {ext.hex(' ') if ext else '(none)'}")
+                except (UdsError, asyncio.TimeoutError) as exc:
+                    log(f"  extended data: couldn't read ({exc})")
+
+                try:
+                    snap = await read_dtc_snapshot(session, request_id, response_id, dtc.code, log=log)
+                    if snap:
+                        log("  freeze-frame:")
+                        for line in _format_snapshot(snap):
+                            log(line)
+                    else:
+                        log("  freeze-frame: (none)")
+                except (UdsError, asyncio.TimeoutError) as exc:
+                    log(f"  freeze-frame:  couldn't read ({exc})")
 
 
 async def read_vin_from_device(device: BLEDevice, log: Log) -> Optional[str]:
