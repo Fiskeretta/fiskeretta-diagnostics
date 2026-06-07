@@ -1,1 +1,2 @@
 bleak>=0.22
+aiohttp>=3.9
