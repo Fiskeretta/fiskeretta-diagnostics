@@ -47,13 +47,14 @@
 
   <button id="run" data-command="scan_and_connect">Scan &amp; Connect</button>
   <button id="readVin" data-command="read_vin">Read VIN</button>
+  <button id="readDtcs" data-command="read_dtcs">Read DTCs</button>
   <span id="status" class="status"></span>
 
   <div id="log"></div>
 
   <script>
     const logEl = document.getElementById("log");
-    const buttons = [document.getElementById("run"), document.getElementById("readVin")];
+    const buttons = [document.getElementById("run"), document.getElementById("readVin"), document.getElementById("readDtcs")];
     const statusEl = document.getElementById("status");
 
     function appendLog(message) {

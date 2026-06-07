@@ -43,7 +43,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         except (json.JSONDecodeError, AttributeError):
             continue
 
-        if command in ("scan_and_connect", "read_vin"):
+        if command in ("scan_and_connect", "read_vin", "read_dtcs"):
             if _busy_lock.locked():
                 await ws.send_json({"type": "log", "message": "Already running a BLE operation — wait for it to finish."})
                 continue
@@ -52,8 +52,10 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
                 try:
                     if command == "scan_and_connect":
                         await run_scan_and_connect(log)
-                    else:
+                    elif command == "read_vin":
                         await run_read_vin(log)
+                    else:
+                        await run_read_dtcs(log)
                 finally:
                     await ws.send_json({"type": "status", "value": "idle"})
 
@@ -81,6 +83,20 @@ async def run_read_vin(log: core.Log) -> None:
     device = await find_vlinker(log)
     if device:
         await uds.read_vin_from_device(device, log)
+
+
+async def run_read_dtcs(log: core.Log) -> None:
+    device = await find_vlinker(log)
+    if not device:
+        return
+
+    report = await uds.read_all_dtcs_from_device(device, log)
+    total = sum(len(dtcs) for dtcs in report.values() if dtcs)
+    log("")
+    if total == 0:
+        log("No DTCs found on any queried module.")
+    else:
+        log(f"Found {total} DTC(s) total — see per-module results above.")
 
 
 def build_app() -> web.Application:
