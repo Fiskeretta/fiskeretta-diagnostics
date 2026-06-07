@@ -16,7 +16,7 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
-from . import core
+from . import core, uds
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -43,30 +43,44 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         except (json.JSONDecodeError, AttributeError):
             continue
 
-        if command == "scan_and_connect":
+        if command in ("scan_and_connect", "read_vin"):
             if _busy_lock.locked():
-                await ws.send_json({"type": "log", "message": "Already running a scan/connect — wait for it to finish."})
+                await ws.send_json({"type": "log", "message": "Already running a BLE operation — wait for it to finish."})
                 continue
             async with _busy_lock:
                 await ws.send_json({"type": "status", "value": "running"})
                 try:
-                    await run_scan_and_connect(log)
+                    if command == "scan_and_connect":
+                        await run_scan_and_connect(log)
+                    else:
+                        await run_read_vin(log)
                 finally:
                     await ws.send_json({"type": "status", "value": "idle"})
 
     return ws
 
 
-async def run_scan_and_connect(log: core.Log) -> None:
+async def find_vlinker(log: core.Log):
     devices = await core.discover(log)
     if not devices:
-        return
+        return None
 
-    device = core.best_guess(devices) or devices[0]
-    if not core.best_guess(devices):
+    device = core.best_guess(devices) or (devices[0] if devices else None)
+    if device and not core.best_guess(devices):
         log(f"No clear vLinker match — trying the first device found: {device.name or '(unnamed)'} ({device.address})")
+    return device
 
-    await core.connect_and_handshake(device, log)
+
+async def run_scan_and_connect(log: core.Log) -> None:
+    device = await find_vlinker(log)
+    if device:
+        await core.connect_and_handshake(device, log)
+
+
+async def run_read_vin(log: core.Log) -> None:
+    device = await find_vlinker(log)
+    if device:
+        await uds.read_vin_from_device(device, log)
 
 
 def build_app() -> web.Application:

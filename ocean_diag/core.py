@@ -77,38 +77,59 @@ def describe_services(client: BleakClient) -> list[str]:
     return lines
 
 
-async def run_handshake(
-    client: BleakClient,
-    write_char: BleakGATTCharacteristic,
-    notify_char: BleakGATTCharacteristic,
-    log: Log,
-) -> None:
-    buf = bytearray()
-    response_ready = asyncio.Event()
+class ElmSession:
+    """A connected ELM327 session: subscribe once, send commands, read replies.
 
-    def on_notify(_: BleakGATTCharacteristic, data: bytearray) -> None:
-        buf.extend(data)
-        if PROMPT in buf:
-            response_ready.set()
+    Every command (AT or raw UDS hex) gets written with a trailing '\\r' and
+    the reply is whatever arrives before the '>' prompt — that's how the
+    ELM327 line discipline works over any transport (serial, BLE, etc).
+    """
 
-    await client.start_notify(notify_char, on_notify)
-    log(f"Subscribed to notifications on {notify_char.uuid}. Running AT handshake via {write_char.uuid}...")
+    def __init__(self, client: BleakClient, write_char: BleakGATTCharacteristic, notify_char: BleakGATTCharacteristic):
+        self.client = client
+        self.write_char = write_char
+        self.notify_char = notify_char
+        self._buf = bytearray()
+        self._ready = asyncio.Event()
 
+    async def __aenter__(self) -> "ElmSession":
+        await self.client.start_notify(self.notify_char, self._on_notify)
+        return self
+
+    async def __aexit__(self, *exc_info) -> None:
+        await self.client.stop_notify(self.notify_char)
+
+    def _on_notify(self, _: BleakGATTCharacteristic, data: bytearray) -> None:
+        self._buf.extend(data)
+        if PROMPT in self._buf:
+            self._ready.set()
+
+    async def send(self, command: str, timeout: float = 5.0) -> str:
+        """Send a command, wait for the '>' prompt, return the decoded reply
+        (command echo and prompt stripped)."""
+        self._buf.clear()
+        self._ready.clear()
+        payload = (command + "\r").encode("ascii")
+        write_with_response = "write" in self.write_char.properties
+        await self.client.write_gatt_char(self.write_char, payload, response=write_with_response)
+
+        await asyncio.wait_for(self._ready.wait(), timeout=timeout)
+        raw = bytes(self._buf).decode("ascii", errors="replace")
+        # Strip the command echo (if ATE0 hasn't taken effect yet) and the prompt.
+        reply = raw.strip()
+        if reply.startswith(command):
+            reply = reply[len(command):]
+        return reply.strip().strip(">").strip()
+
+
+async def run_handshake(session: ElmSession, log: Log) -> None:
+    log(f"Running AT handshake via {session.write_char.uuid} / {session.notify_char.uuid}...")
     for cmd in HANDSHAKE:
-        buf.clear()
-        response_ready.clear()
-        payload = (cmd + "\r").encode("ascii")
-        write_with_response = "write" in write_char.properties
-        await client.write_gatt_char(write_char, payload, response=write_with_response)
-
         try:
-            await asyncio.wait_for(response_ready.wait(), timeout=5.0)
-            reply = bytes(buf).decode("ascii", errors="replace").strip().strip(">").strip()
+            reply = await session.send(cmd)
             log(f"  {cmd:10s} -> {reply!r}")
         except asyncio.TimeoutError:
-            log(f"  {cmd:10s} -> (no response within 5s; raw buffer: {bytes(buf)!r})")
-
-    await client.stop_notify(notify_char)
+            log(f"  {cmd:10s} -> (no response within 5s)")
 
 
 async def connect_and_handshake(device: BLEDevice, log: Log) -> None:
@@ -124,4 +145,5 @@ async def connect_and_handshake(device: BLEDevice, log: Log) -> None:
             return
 
         log(f"Guessed UART pair — write: {write_char.uuid}  notify: {notify_char.uuid}")
-        await run_handshake(client, write_char, notify_char, log)
+        async with ElmSession(client, write_char, notify_char) as session:
+            await run_handshake(session, log)

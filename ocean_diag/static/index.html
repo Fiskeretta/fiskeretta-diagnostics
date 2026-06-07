@@ -45,14 +45,15 @@
   <h1>Ocean Diag</h1>
   <p class="sub">Free, open diagnostics for the Fisker Ocean via the Vgate vLinker FD+</p>
 
-  <button id="run">Scan &amp; Connect</button>
+  <button id="run" data-command="scan_and_connect">Scan &amp; Connect</button>
+  <button id="readVin" data-command="read_vin">Read VIN</button>
   <span id="status" class="status"></span>
 
   <div id="log"></div>
 
   <script>
     const logEl = document.getElementById("log");
-    const runBtn = document.getElementById("run");
+    const buttons = [document.getElementById("run"), document.getElementById("readVin")];
     const statusEl = document.getElementById("status");
 
     function appendLog(message) {
@@ -66,7 +67,7 @@
     ws.onopen = () => appendLog("Connected to ocean-diag server.");
     ws.onclose = () => {
       appendLog("Disconnected from server.");
-      runBtn.disabled = true;
+      buttons.forEach((b) => (b.disabled = true));
     };
 
     ws.onmessage = (event) => {
@@ -75,14 +76,16 @@
         appendLog(msg.message);
       } else if (msg.type === "status") {
         const running = msg.value === "running";
-        runBtn.disabled = running;
+        buttons.forEach((b) => (b.disabled = running));
         statusEl.textContent = running ? "running…" : "";
       }
     };
 
-    runBtn.addEventListener("click", () => {
-      logEl.textContent = "";
-      ws.send(JSON.stringify({ command: "scan_and_connect" }));
+    buttons.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        logEl.textContent = "";
+        ws.send(JSON.stringify({ command: btn.dataset.command }));
+      });
     });
   </script>
 </body>
