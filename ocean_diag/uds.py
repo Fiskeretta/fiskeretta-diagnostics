@@ -20,7 +20,7 @@ from typing import Optional
 from bleak import BleakClient
 from bleak.backends.device import BLEDevice
 
-from . import core
+from . import core, dtc_catalog
 from .core import ElmSession, Log
 
 # Module CAN ID pairs (request -> response), decoded from FiskerDBC.dbc
@@ -185,8 +185,15 @@ class Dtc:
         entries every ECU's full DTC table carries."""
         return bool(self.status & NOTEWORTHY_STATUS_MASK)
 
+    @property
+    def description(self) -> Optional[str]:
+        """Human description from the local DTC catalog, if one is installed."""
+        return dtc_catalog.describe(self.code)
+
     def __str__(self) -> str:
-        return f"0x{self.code_hex} (status 0x{self.status:02X})"
+        base = f"0x{self.code_hex} (status 0x{self.status:02X})"
+        desc = self.description
+        return f"{base} — {desc}" if desc else base
 
 
 async def read_dtcs(
