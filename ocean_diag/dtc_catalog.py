@@ -15,16 +15,20 @@ default search paths below.
 
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Optional
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# Search order: explicit env var, then conventional locations.
+# Search order: explicit env var, then conventional locations (dev tree first,
+# then packaged-app locations a user can drop the catalog into).
 _CANDIDATES = [
     os.environ.get("OCEAN_DIAG_DTC_CATALOG"),
-    _REPO_ROOT.parent / "docs" / "DTC" / "dtc_index.json",  # sibling docs/ dir
+    _REPO_ROOT.parent / "docs" / "DTC" / "dtc_index.json",  # sibling docs/ dir (dev)
     _REPO_ROOT / "docs" / "DTC" / "dtc_index.json",
+    Path.home() / ".config" / "ocean-diag" / "dtc_index.json",  # user data (packaged)
+    Path(sys.executable).parent / "dtc_index.json",            # next to the app binary
 ]
 
 _catalog: Optional[dict] = None

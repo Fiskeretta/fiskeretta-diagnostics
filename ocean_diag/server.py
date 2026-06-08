@@ -13,6 +13,7 @@ Usage:
 
 import asyncio
 import json
+import sys
 from pathlib import Path
 
 from aiohttp import web, WSMsgType
@@ -20,7 +21,23 @@ from aiohttp import web, WSMsgType
 from . import uds
 from .connection import ConnectionManager
 
-STATIC_DIR = Path(__file__).parent / "static"
+def _resolve_static_dir() -> Path:
+    """Locate the static/ dir whether running from source or a PyInstaller
+    bundle (onefile, onedir, or a macOS .app where data lives in Resources)."""
+    if getattr(sys, "frozen", False):
+        base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+        candidates = [
+            base / "ocean_diag" / "static",
+            base.parent / "Resources" / "ocean_diag" / "static",  # macOS .app split
+        ]
+        for c in candidates:
+            if (c / "index.html").is_file():
+                return c
+        return candidates[0]
+    return Path(__file__).parent / "static"
+
+
+STATIC_DIR = _resolve_static_dir()
 
 # One shared connection for the whole process — survives page reloads / ws
 # reconnects, so the BLE link stays up across them.
