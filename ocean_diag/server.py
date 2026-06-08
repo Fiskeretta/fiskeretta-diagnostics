@@ -1,13 +1,14 @@
 """
-Simple local web UI for ocean-diag.
+Local web UI for ocean-diag.
 
-Runs a tiny aiohttp server (same asyncio loop bleak uses — no thread juggling
-between BLE and the GUI) that serves a single page with a "Scan & Connect"
-button and a live log fed over a websocket.
+Runs a tiny aiohttp server (same asyncio loop bleak uses) that serves a single
+page and drives a *persistent* BLE connection via a shared ConnectionManager:
+the dongle is connected once (auto, on launch), remembered, and reused for every
+action — no rescan, no reconnect per click.
 
 Usage:
-    python3 -m ocean_diag.server
-    -> open http://localhost:8765 in a browser
+    python3 -m ocean_diag.server      # then open http://localhost:8765
+    python3 -m ocean_diag.app         # native window (no browser)
 """
 
 import asyncio
@@ -16,12 +17,14 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
-from . import core, uds
+from . import uds
+from .connection import ConnectionManager
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# Only one BLE operation at a time — the dongle can't serve two clients.
-_busy_lock = asyncio.Lock()
+# One shared connection for the whole process — survives page reloads / ws
+# reconnects, so the BLE link stays up across them.
+_manager = ConnectionManager()
 
 
 async def index(request: web.Request) -> web.Response:
@@ -33,7 +36,17 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     await ws.prepare(request)
 
     def log(message: str) -> None:
-        asyncio.create_task(ws.send_json({"type": "log", "message": message}))
+        if not ws.closed:
+            asyncio.create_task(ws.send_json({"type": "log", "message": message}))
+
+    async def send_status() -> None:
+        if not ws.closed:
+            await ws.send_json({"type": "connection", **_manager.status()})
+
+    # Route the shared manager's progress to whichever client is attached now.
+    _manager.log = log
+    await send_status()
+    asyncio.create_task(_auto_connect(send_status))
 
     async for msg in ws:
         if msg.type != WSMsgType.TEXT:
@@ -42,60 +55,50 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
             command = json.loads(msg.data).get("command")
         except (json.JSONDecodeError, AttributeError):
             continue
-
-        if command in ("scan_and_connect", "read_vin", "read_dtcs", "drill_failing"):
-            if _busy_lock.locked():
-                await ws.send_json({"type": "log", "message": "Already running a BLE operation — wait for it to finish."})
-                continue
-            async with _busy_lock:
-                await ws.send_json({"type": "status", "value": "running"})
-                try:
-                    if command == "scan_and_connect":
-                        await run_scan_and_connect(log)
-                    elif command == "read_vin":
-                        await run_read_vin(log)
-                    elif command == "read_dtcs":
-                        await run_read_dtcs(log)
-                    else:
-                        await run_drill_failing(log)
-                finally:
-                    await ws.send_json({"type": "status", "value": "idle"})
+        await _handle(command, ws, log, send_status)
 
     return ws
 
 
-async def find_vlinker(log: core.Log):
-    devices = await core.discover(log)
-    if not devices:
-        return None
-
-    device = core.best_guess(devices) or (devices[0] if devices else None)
-    if device and not core.best_guess(devices):
-        log(f"No clear vLinker match — trying the first device found: {device.name or '(unnamed)'} ({device.address})")
-    return device
+async def _auto_connect(send_status) -> None:
+    """Connect on launch (first client attach) if not already connected."""
+    if not _manager.connected:
+        await _manager.connect()
+    await send_status()
 
 
-async def run_scan_and_connect(log: core.Log) -> None:
-    device = await find_vlinker(log)
-    if device:
-        await core.connect_and_handshake(device, log)
-
-
-async def run_read_vin(log: core.Log) -> None:
-    device = await find_vlinker(log)
-    if device:
-        await uds.read_vin_from_device(device, log)
-
-
-async def run_read_dtcs(log: core.Log) -> None:
-    device = await find_vlinker(log)
-    if not device:
+async def _handle(command: str, ws: web.WebSocketResponse, log, send_status) -> None:
+    actions = {
+        "connect": lambda: _manager.connect(),
+        "disconnect": lambda: _manager.disconnect(),
+        "read_vin": lambda: run_read_vin(log),
+        "read_dtcs": lambda: run_read_dtcs(log),
+        "drill_failing": lambda: _manager.run(lambda s: uds.drill_failing_dtcs(s, log)),
+    }
+    if command not in actions:
         return
 
-    report = await uds.read_all_dtcs_from_device(device, log)
+    await ws.send_json({"type": "status", "value": "running"})
+    try:
+        await actions[command]()
+    except Exception as exc:  # surface failures to the UI instead of dying
+        log(f"Error: {exc}")
+    finally:
+        await ws.send_json({"type": "status", "value": "idle"})
+        await send_status()
+
+
+async def run_read_vin(log) -> None:
+    log("Reading VIN from the Gateway module (UDS 0x22, DID 0xF190)...")
+    vin = await _manager.run(lambda s: uds.read_vin(s, log))
+    log(f"VIN: {vin}")
+
+
+async def run_read_dtcs(log) -> None:
+    report = await _manager.run(lambda s: uds.read_all_dtcs(s, log))
     all_dtcs = [dtc for dtcs in report.values() if dtcs for dtc in dtcs]
-    failing_now = [dtc for dtc in all_dtcs if dtc.is_failing_now]
-    confirmed = [dtc for dtc in all_dtcs if dtc.is_confirmed]
+    failing_now = [d for d in all_dtcs if d.is_failing_now]
+    confirmed = [d for d in all_dtcs if d.is_confirmed]
     log("")
     if not all_dtcs:
         log("No DTCs found on any queried module.")
@@ -104,12 +107,6 @@ async def run_read_dtcs(log: core.Log) -> None:
     else:
         log(f"{len(failing_now)} failing right now, {len(confirmed)} confirmed (may be historical), out of {len(all_dtcs)} table entries.")
         log("'FAILING NOW' is the actionable list — 'confirmed' codes persist until cleared even if the underlying issue resolved.")
-
-
-async def run_drill_failing(log: core.Log) -> None:
-    device = await find_vlinker(log)
-    if device:
-        await uds.drill_failing_dtcs_from_device(device, log)
 
 
 def build_app() -> web.Application:

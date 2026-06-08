@@ -17,10 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
-from bleak import BleakClient
-from bleak.backends.device import BLEDevice
-
-from . import core, dtc_catalog
+from . import dtc_catalog
 from .core import ElmSession, Log
 
 # Module CAN ID pairs (request -> response), decoded from FiskerDBC.dbc
@@ -332,24 +329,6 @@ async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None) -> dict:
     return report
 
 
-async def read_all_dtcs_from_device(device: BLEDevice, log: Log) -> dict:
-    """Connect, run the minimal AT setup, and read DTCs from every known module."""
-    log(f"Connecting to {device.name} ({device.address})...")
-    async with BleakClient(device) as client:
-        write_char, notify_char = core.find_uart_pair(client)
-        if not write_char or not notify_char:
-            log("Couldn't auto-detect a write+notify characteristic pair.")
-            return {}
-
-        async with ElmSession(client, write_char, notify_char) as session:
-            log("Setting up adapter (reset, echo off, force ISO 15765-4 CAN, auto-format, allow long messages)...")
-            for cmd in ("ATZ", "ATE0", "ATSP6", "ATCAF1", "ATAL"):
-                reply = await session.send(cmd)
-                log(f"  {cmd:10s} -> {reply!r}")
-
-            return await read_all_dtcs(session, log)
-
-
 # Snapshot DID data lengths (bytes after the 2-byte DID tag), decoded by hand
 # from real freeze-frames. 0xEFF6-0xEFF9 are global/environmental fields shared
 # across modules; 0x148x are MCU-specific. Lengths verified against captured
@@ -425,83 +404,43 @@ def _format_snapshot(data: bytes) -> list[str]:
     return lines
 
 
-async def drill_failing_dtcs_from_device(device: BLEDevice, log: Log) -> None:
-    """Connect, find every currently-failing DTC, then ask its module for the
-    extended data (occurrence counter / aging) and freeze-frame snapshot —
-    the deepest the car will tell us about a fault over standard UDS."""
-    log(f"Connecting to {device.name} ({device.address})...")
-    async with BleakClient(device) as client:
-        write_char, notify_char = core.find_uart_pair(client)
-        if not write_char or not notify_char:
-            log("Couldn't auto-detect a write+notify characteristic pair.")
-            return
+async def drill_failing_dtcs(session: ElmSession, log: Log) -> None:
+    """On a live session: find every currently-failing DTC, then ask its module
+    for the extended data (occurrence counter / aging) and freeze-frame
+    snapshot — the deepest the car will tell us about a fault over standard UDS."""
+    log("Scanning all modules for currently-failing DTCs...")
+    report = await read_all_dtcs(session, log=None)
+    failing = [
+        (name, dtc)
+        for name, dtcs in report.items()
+        if dtcs
+        for dtc in dtcs
+        if dtc.is_failing_now
+    ]
+    if not failing:
+        log("No currently-failing DTCs to drill into.")
+        return
 
-        async with ElmSession(client, write_char, notify_char) as session:
-            log("Setting up adapter (reset, echo off, force ISO 15765-4 CAN, auto-format, allow long messages)...")
-            for cmd in ("ATZ", "ATE0", "ATSP6", "ATCAF1", "ATAL"):
-                reply = await session.send(cmd)
-                log(f"  {cmd:10s} -> {reply!r}")
+    log(f"Found {len(failing)} failing DTC(s). Fetching extended data + freeze-frame for each:")
+    for name, dtc in failing:
+        request_id, response_id = MODULES[name]
+        log("")
+        log(f"=== {name.upper()}  {dtc} ===")
+        await configure_addressing(session, request_id, response_id, log)
 
-            log("Scanning all modules for currently-failing DTCs...")
-            report = await read_all_dtcs(session, log=None)
-            failing = [
-                (name, dtc)
-                for name, dtcs in report.items()
-                if dtcs
-                for dtc in dtcs
-                if dtc.is_failing_now
-            ]
-            if not failing:
-                log("No currently-failing DTCs to drill into.")
-                return
+        try:
+            ext = await read_dtc_extended_data(session, request_id, response_id, dtc.code, log=log)
+            log(f"  extended data: {ext.hex(' ') if ext else '(none)'}")
+        except (UdsError, asyncio.TimeoutError) as exc:
+            log(f"  extended data: couldn't read ({exc})")
 
-            log(f"Found {len(failing)} failing DTC(s). Fetching extended data + freeze-frame for each:")
-            for name, dtc in failing:
-                request_id, response_id = MODULES[name]
-                log("")
-                log(f"=== {name.upper()}  {dtc} ===")
-                await configure_addressing(session, request_id, response_id, log)
-
-                try:
-                    ext = await read_dtc_extended_data(session, request_id, response_id, dtc.code, log=log)
-                    log(f"  extended data: {ext.hex(' ') if ext else '(none)'}")
-                except (UdsError, asyncio.TimeoutError) as exc:
-                    log(f"  extended data: couldn't read ({exc})")
-
-                try:
-                    snap = await read_dtc_snapshot(session, request_id, response_id, dtc.code, log=log)
-                    if snap:
-                        log("  freeze-frame:")
-                        for line in _format_snapshot(snap):
-                            log(line)
-                    else:
-                        log("  freeze-frame: (none)")
-                except (UdsError, asyncio.TimeoutError) as exc:
-                    log(f"  freeze-frame:  couldn't read ({exc})")
-
-
-async def read_vin_from_device(device: BLEDevice, log: Log) -> Optional[str]:
-    """Connect, run the minimal AT setup, and read the VIN — a single
-    end-to-end smoke test that we can talk real UDS to the car's ECUs."""
-    log(f"Connecting to {device.name} ({device.address})...")
-    async with BleakClient(device) as client:
-        write_char, notify_char = core.find_uart_pair(client)
-        if not write_char or not notify_char:
-            log("Couldn't auto-detect a write+notify characteristic pair.")
-            return None
-
-        async with ElmSession(client, write_char, notify_char) as session:
-            log("Setting up adapter (reset, echo off, force ISO 15765-4 CAN, auto-format, allow long messages)...")
-            for cmd in ("ATZ", "ATE0", "ATSP6", "ATCAF1", "ATAL"):
-                reply = await session.send(cmd)
-                log(f"  {cmd:10s} -> {reply!r}")
-
-            log("Reading VIN from the Gateway module (UDS 0x22, DID 0xF190)...")
-            try:
-                vin = await read_vin(session, log)
-            except UdsError as exc:
-                log(f"Failed to read VIN: {exc}")
-                return None
-
-            log(f"VIN: {vin}")
-            return vin
+        try:
+            snap = await read_dtc_snapshot(session, request_id, response_id, dtc.code, log=log)
+            if snap:
+                log("  freeze-frame:")
+                for line in _format_snapshot(snap):
+                    log(line)
+            else:
+                log("  freeze-frame: (none)")
+        except (UdsError, asyncio.TimeoutError) as exc:
+            log(f"  freeze-frame:  couldn't read ({exc})")

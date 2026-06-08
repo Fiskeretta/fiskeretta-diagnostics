@@ -24,7 +24,23 @@
       color: #fff;
       cursor: pointer;
     }
-    button:disabled { background: #444; cursor: default; }
+    button:disabled { background: #444; color: #999; cursor: default; }
+    button.secondary { background: #333; }
+    #connbar {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      padding: 0.6rem 0.75rem;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }
+    #dot { width: 10px; height: 10px; border-radius: 50%; background: #b33; flex: none; }
+    #dot.on { background: #2a6; }
+    #dot.busy { background: #ca3; }
+    #connText { flex: 1; font-size: 0.9rem; }
+    #actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
     #log {
       margin-top: 1rem;
       background: #000;
@@ -38,25 +54,37 @@
       font-size: 0.85rem;
       line-height: 1.4;
     }
-    .status { color: #888; font-size: 0.85rem; margin-left: 0.75rem; }
   </style>
 </head>
 <body>
   <h1>Ocean Diag</h1>
   <p class="sub">Free, open diagnostics for the Fisker Ocean via the Vgate vLinker FD+</p>
 
-  <button id="run" data-command="scan_and_connect">Scan &amp; Connect</button>
-  <button id="readVin" data-command="read_vin">Read VIN</button>
-  <button id="readDtcs" data-command="read_dtcs">Read DTCs</button>
-  <button id="drillFailing" data-command="drill_failing">Drill Into Failing</button>
-  <span id="status" class="status"></span>
+  <div id="connbar">
+    <span id="dot"></span>
+    <span id="connText">Starting…</span>
+    <button id="connectBtn" class="secondary">Connect</button>
+    <button id="disconnectBtn" class="secondary">Disconnect</button>
+  </div>
+
+  <div id="actions">
+    <button data-command="read_vin">Read VIN</button>
+    <button data-command="read_dtcs">Read DTCs</button>
+    <button data-command="drill_failing">Drill Into Failing</button>
+  </div>
 
   <div id="log"></div>
 
   <script>
     const logEl = document.getElementById("log");
-    const buttons = [document.getElementById("run"), document.getElementById("readVin"), document.getElementById("readDtcs"), document.getElementById("drillFailing")];
-    const statusEl = document.getElementById("status");
+    const dot = document.getElementById("dot");
+    const connText = document.getElementById("connText");
+    const connectBtn = document.getElementById("connectBtn");
+    const disconnectBtn = document.getElementById("disconnectBtn");
+    const actionButtons = [...document.querySelectorAll("#actions button")];
+
+    let connected = false;
+    let busy = false;
 
     function appendLog(message) {
       const atBottom = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 4;
@@ -64,12 +92,21 @@
       if (atBottom) logEl.scrollTop = logEl.scrollHeight;
     }
 
+    function render() {
+      dot.className = busy ? "busy" : (connected ? "on" : "");
+      // action buttons need a live connection and no in-flight op
+      actionButtons.forEach((b) => (b.disabled = !connected || busy));
+      connectBtn.disabled = busy || connected;
+      disconnectBtn.disabled = busy || !connected;
+    }
+
     const ws = new WebSocket(`ws://${location.host}/ws`);
 
     ws.onopen = () => appendLog("Connected to ocean-diag server.");
     ws.onclose = () => {
       appendLog("Disconnected from server.");
-      buttons.forEach((b) => (b.disabled = true));
+      connected = false; busy = true; render();
+      connText.textContent = "Server connection lost.";
     };
 
     ws.onmessage = (event) => {
@@ -77,18 +114,27 @@
       if (msg.type === "log") {
         appendLog(msg.message);
       } else if (msg.type === "status") {
-        const running = msg.value === "running";
-        buttons.forEach((b) => (b.disabled = running));
-        statusEl.textContent = running ? "running…" : "";
+        busy = msg.value === "running";
+        render();
+      } else if (msg.type === "connection") {
+        connected = msg.connected;
+        connText.textContent = connected
+          ? `Connected — ${msg.device || "dongle"}`
+          : "Not connected to the dongle.";
+        render();
       }
     };
 
-    buttons.forEach((btn) => {
+    connectBtn.addEventListener("click", () => ws.send(JSON.stringify({ command: "connect" })));
+    disconnectBtn.addEventListener("click", () => ws.send(JSON.stringify({ command: "disconnect" })));
+    actionButtons.forEach((btn) => {
       btn.addEventListener("click", () => {
         logEl.textContent = "";
         ws.send(JSON.stringify({ command: btn.dataset.command }));
       });
     });
+
+    render();
   </script>
 </body>
 </html>
