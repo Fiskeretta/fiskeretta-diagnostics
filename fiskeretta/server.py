@@ -152,6 +152,9 @@ async def send_saved_scans(ws) -> None:
 async def run_discover(ws, log) -> None:
     """Probe the bus for responding ECUs and report the findings."""
     ecus = await _manager.run(lambda s: uds.discover_ecus(s, log))
+    path = storage.save_discovery(ecus)
+    if path:
+        log(f"Saved discovery to {path}")
     if not ws.closed:
         await ws.send_json({"type": "discovery", "ecus": ecus})
 

@@ -20,7 +20,13 @@
   }
   *{box-sizing:border-box;margin:0}
   html{-webkit-font-smoothing:antialiased}
-  body{background:var(--bg);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-size:15px;line-height:1.5}
+  body{background:var(--bg);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-size:15px;line-height:1.5;
+    -webkit-user-select:text;user-select:text}
+  .status,.btn,.linkbtn,.tier .name,.caret{-webkit-user-select:none;user-select:none}
+  .copybtn{font-family:inherit;background:var(--surface-2);border:1px solid var(--line);color:var(--dim);
+    font-size:11px;font-weight:600;border-radius:6px;padding:3px 9px;cursor:pointer;-webkit-user-select:none;user-select:none}
+  .copybtn:hover{color:var(--text)}
+  .loghead .sp{flex:1}
   .tnum{font-variant-numeric:tabular-nums}
   .mono{font-family:"Martian Mono",monospace;font-variant-ligatures:none}
   .wrap{max-width:780px;margin:0 auto;padding:20px 18px 64px}
@@ -154,7 +160,7 @@
   </div>
 
   <div class="logbox" id="logbox">
-    <div class="loghead" id="loghead"><span class="caret">▸</span> Activity log</div>
+    <div class="loghead" id="loghead"><span class="caret">▸</span> Activity log<span class="sp"></span><button class="copybtn" id="logcopy">Copy</button></div>
     <div class="logbody" id="logbody"></div>
   </div>
 
@@ -163,7 +169,24 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s==null?"":String(s)).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
-let connected = false, busy = false, started = false, lastResult = null;
+let connected = false, busy = false, started = false, lastResult = null, lastDiscovery = [];
+function copyText(text){
+  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+  const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); } catch (e) {}
+  ta.remove(); return Promise.resolve();
+}
+function flashCopied(btn){ const t = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = t, 1200); }
+function copyDiscovery(e){
+  const text = lastDiscovery.map(d => {
+    const id = "0x" + d.request_id.toString(16).toUpperCase();
+    const resp = "0x" + d.response_id.toString(16).toUpperCase();
+    const who = d.module ? d.module.toUpperCase() : (d.name_hint || "unidentified");
+    return `${id}\t${resp}\t${who}${d.module ? "" : " (new)"}`;
+  }).join("\n");
+  copyText(text); if (e && e.target) flashCopied(e.target);
+}
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
 const send = (command) => ws.send(JSON.stringify({command}));
@@ -188,9 +211,10 @@ function startDiscover(){
   send("discover");
 }
 function onDiscovery(m){
-  const ecus = m.ecus || [];
+  lastDiscovery = m.ecus || [];
+  const ecus = lastDiscovery;
   const news = ecus.filter(e => !e.module).length;
-  let html = `<div class="tier"><span class="name">Discovered ECUs</span><span class="rule"></span><span class="count tnum">${ecus.length} responding · ${news} new</span></div>`;
+  let html = `<div class="tier"><span class="name">Discovered ECUs</span><span class="rule"></span><span class="count tnum">${ecus.length} responding · ${news} new</span><button class="copybtn" onclick="copyDiscovery(event)">Copy</button></div>`;
   html += `<div class="unreached"><div class="grid">`;
   for (const e of ecus){
     const id = "0x" + e.request_id.toString(16).toUpperCase();
@@ -358,6 +382,7 @@ function log(msg){
   b.textContent += msg + "\n"; if (atBottom) b.scrollTop = b.scrollHeight;
 }
 $("loghead").addEventListener("click", () => $("logbox").classList.toggle("open"));
+$("logcopy").addEventListener("click", (e) => { e.stopPropagation(); copyText($("logbody").textContent); flashCopied($("logcopy")); });
 $("rescan").addEventListener("click", () => { if (connected && !busy) send("scan"); });
 $("reconnect").addEventListener("click", () => send("connect"));
 $("export").addEventListener("click", () => {

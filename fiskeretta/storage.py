@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .paths import SCANS_DIR
+from .paths import CONFIG_DIR, SCANS_DIR
 
 
 def save_scan(result: dict) -> Optional[Path]:
@@ -54,4 +54,16 @@ def load_scan(scan_id: str) -> Optional[dict]:
     try:
         return json.loads((SCANS_DIR / f"{scan_id}.json").read_text())
     except (OSError, json.JSONDecodeError):
+        return None
+
+
+def save_discovery(ecus: list) -> Optional[Path]:
+    """Persist the latest ECU-discovery result."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        path = CONFIG_DIR / "discovery.json"
+        path.write_text(json.dumps(
+            {"discovered_at": datetime.now(timezone.utc).isoformat(), "ecus": ecus}, indent=2))
+        return path
+    except OSError:
         return None
