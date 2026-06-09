@@ -162,3 +162,22 @@ def troubleshooting(code: int) -> Optional[dict]:
         if value:
             result[key] = value
     return result
+
+
+def module_for_code(code: int) -> Optional[str]:
+    """The manual's module-section name for a code (e.g. 'MCU_R', 'BMS'), taken
+    from the page header '<MODULE> DTC Troubleshooting'. Lets us identify a
+    discovered ECU by reading one of its codes and looking up which section it
+    lives in."""
+    row = _load().get(code)
+    if not row:
+        return None
+    text = _load_pages().get(row.get("page"))
+    if not text:
+        return None
+    marker = "DTC Troubleshooting"
+    for line in text.strip().splitlines():
+        line = line.strip()
+        if line.endswith(marker):
+            return line[: -len(marker)].strip() or None
+    return None

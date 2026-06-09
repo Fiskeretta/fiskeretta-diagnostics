@@ -525,6 +525,20 @@ async def _identify_ecu(session: ElmSession, request_id: int, response_id: int) 
     return None
 
 
+async def _identify_by_dtc(session: ElmSession, request_id: int, response_id: int) -> Optional[str]:
+    """Name an ECU by reading one of its DTCs and looking up which module
+    section that code lives in, per the manual (the reliable identity)."""
+    try:
+        dtcs = await read_dtcs(session, request_id, response_id)
+    except (UdsError, asyncio.TimeoutError):
+        return None
+    for dtc in dtcs:
+        name = dtc_catalog.module_for_code(dtc.code)
+        if name:
+            return name
+    return None
+
+
 async def discover_ecus(session: ElmSession, log: Optional[Log] = None,
                         start: int = DISCOVERY_START, end: int = DISCOVERY_END) -> list:
     """Probe diagnostic request IDs across [start, end] and report which ones an
@@ -550,12 +564,20 @@ async def discover_ecus(session: ElmSession, log: Optional[Log] = None,
             continue
 
         name = known.get(req)
-        entry = {"request_id": req, "response_id": resp, "module": name, "name_hint": None}
+        entry = {"request_id": req, "response_id": resp, "module": name,
+                 "module_name": None, "part_number": None, "name_hint": None}
         if not name:
-            entry["name_hint"] = await _identify_ecu(session, req, resp)
+            entry["module_name"] = await _identify_by_dtc(session, req, resp)
+            entry["part_number"] = await _identify_ecu(session, req, resp)
+            entry["name_hint"] = entry["module_name"] or entry["part_number"]
         found.append(entry)
         if log:
-            who = name.upper() if name else (f"NEW — {entry['name_hint']}" if entry["name_hint"] else "NEW (unidentified)")
+            if name:
+                who = name.upper()
+            elif entry["module_name"]:
+                who = f"NEW — {entry['module_name']}" + (f" [{entry['part_number']}]" if entry["part_number"] else "")
+            else:
+                who = f"NEW — {entry['part_number']}" if entry["part_number"] else "NEW (unidentified)"
             log(f"  0x{req:03X} -> 0x{resp:03X}: {who}")
         if log and offset and offset % 64 == 0:
             log(f"  …{offset}/{total} probed, {len(found)} responding so far")
