@@ -350,10 +350,9 @@ def _format_timestamp(raw: bytes) -> str:
     """EFF6 = [year-2015, month(0-indexed), day(0-indexed), hour, minute, second], UTC.
 
     Epoch (2015), 0-indexed month AND day, and UTC were all confirmed by
-    calibration: the latest capture decodes to the owner's exact last-drive
-    instant and odometer (2026-06-06 18:00 PDT @ 14,072 mi) once the stored
-    UTC value is shifted to local time. We render UTC plus the machine's
-    local time."""
+    calibrating against a known last-drive instant and odometer: the stored
+    UTC value, shifted to local time, matched it exactly. We render UTC plus
+    the machine's local time."""
     yy, mo, dd, hh, mi, ss = raw
     try:
         dt = datetime(2015 + yy, mo + 1, dd + 1, hh, mi, ss, tzinfo=timezone.utc)
