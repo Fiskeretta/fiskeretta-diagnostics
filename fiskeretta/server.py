@@ -18,7 +18,7 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
-from . import uds
+from . import report, storage, uds
 from .connection import ConnectionManager
 
 def _resolve_static_dir() -> Path:
@@ -91,6 +91,8 @@ async def _handle(command: str, ws: web.WebSocketResponse, log, send_status) -> 
         "read_vin": lambda: run_read_vin(log),
         "read_dtcs": lambda: run_read_dtcs(log),
         "drill_failing": lambda: _manager.run(lambda s: uds.drill_failing_dtcs(s, log)),
+        "scan": lambda: run_scan(ws, log),
+        "saved_scans": lambda: send_saved_scans(ws),
     }
     if command not in actions:
         return
@@ -124,6 +126,21 @@ async def run_read_dtcs(log) -> None:
     else:
         log(f"{len(failing_now)} failing right now, {len(confirmed)} confirmed (may be historical), out of {len(all_dtcs)} table entries.")
         log("'FAILING NOW' is the actionable list — 'confirmed' codes persist until cleared even if the underlying issue resolved.")
+
+
+async def run_scan(ws, log) -> None:
+    """Full structured scan: VIN + decode + all-module DTCs -> scan_result, saved to disk."""
+    result = await _manager.run(lambda s: report.build_scan_result(s, log))
+    path = storage.save_scan(result)
+    if not ws.closed:
+        await ws.send_json({"type": "scan_result", "result": result})
+    if path:
+        log(f"Saved scan to {path}")
+
+
+async def send_saved_scans(ws) -> None:
+    if not ws.closed:
+        await ws.send_json({"type": "saved_scans", "scans": storage.list_scans()})
 
 
 def build_app() -> web.Application:

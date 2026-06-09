@@ -1,0 +1,57 @@
+"""
+Scan persistence.
+
+Every scan is written to ~/.config/fiskeretta/scans/ as JSON, so the diagnostic
+record survives even after the codes are cleared from the car. The UI's "Saved
+scans" section lists them.
+"""
+
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from .paths import SCANS_DIR
+
+
+def save_scan(result: dict) -> Optional[Path]:
+    """Write a scan result to disk, return its path (or None if it couldn't)."""
+    try:
+        SCANS_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        path = SCANS_DIR / f"scan-{stamp}.json"
+        n = 1
+        while path.exists():
+            path = SCANS_DIR / f"scan-{stamp}-{n}.json"
+            n += 1
+        path.write_text(json.dumps(result, indent=2))
+        return path
+    except OSError:
+        return None
+
+
+def list_scans() -> list[dict]:
+    """Summaries of saved scans, newest first."""
+    if not SCANS_DIR.is_dir():
+        return []
+    out = []
+    for path in sorted(SCANS_DIR.glob("scan-*.json"), reverse=True):
+        try:
+            result = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        summary = result.get("summary", {})
+        out.append({
+            "id": path.stem,
+            "scanned_at": result.get("scanned_at"),
+            "active": summary.get("active"),
+            "historical": summary.get("historical"),
+        })
+    return out
+
+
+def load_scan(scan_id: str) -> Optional[dict]:
+    try:
+        return json.loads((SCANS_DIR / f"{scan_id}.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
