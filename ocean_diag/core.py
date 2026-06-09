@@ -26,17 +26,23 @@ PROMPT = b">"
 Log = Callable[[str], None]
 
 
-async def discover(log: Log, timeout: float = 10.0) -> list[BLEDevice]:
-    log(f"Scanning for BLE devices ({timeout:.0f}s) — make sure the vLinker is plugged into the car's OBD2 port...")
+async def discover(log: Log, timeout: float = 10.0, quiet: bool = False) -> list[BLEDevice]:
+    """Scan for BLE devices. `quiet` suppresses the chatty per-device listing —
+    the app drives discovery via the connection manager and doesn't want the
+    noise in its log; the CLI leaves quiet=False to show the full list."""
+    if not quiet:
+        log(f"Scanning for BLE devices ({timeout:.0f}s) — make sure the vLinker is plugged into the car's OBD2 port...")
     devices = await BleakScanner.discover(timeout=timeout)
     if not devices:
-        log("No BLE devices found. Is the dongle plugged in and the ignition on (Key On, Engine Off)?")
+        if not quiet:
+            log("No BLE devices found. Is the dongle plugged in and the ignition on (Key On, Engine Off)?")
         return []
 
-    log(f"Found {len(devices)} device(s):")
-    for d in devices:
-        flag = " <-- looks like the vLinker" if _looks_like_vlinker(d) else ""
-        log(f"  {d.name or '(unnamed)'}  {d.address}{flag}")
+    if not quiet:
+        log(f"Found {len(devices)} device(s):")
+        for d in devices:
+            flag = " <-- looks like the vLinker" if _looks_like_vlinker(d) else ""
+            log(f"  {d.name or '(unnamed)'}  {d.address}{flag}")
     return devices
 
 

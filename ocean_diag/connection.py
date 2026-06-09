@@ -110,7 +110,7 @@ class ConnectionManager:
             if device:
                 return device
             self.log("Saved dongle not in range — scanning...")
-        devices = await core.discover(self.log)
+        devices = await core.discover(self.log, quiet=True)
         return core.best_guess(devices) or (devices[0] if devices else None)
 
     async def _open(self, device) -> None:
