@@ -31,6 +31,7 @@ _TIER_ORDER = {ACTIVE: 0, HISTORICAL: 1, CLEAR: 2, UNREACHABLE: 3, NOT_REACHED: 
 
 
 def _dtc_dict(d: uds.Dtc) -> dict:
+    info = dtc_catalog.troubleshooting(d.code) or {}
     return {
         "code": f"0x{d.code_hex}",
         "j2012": dtc_catalog.j2012(d.code),
@@ -38,6 +39,12 @@ def _dtc_dict(d: uds.Dtc) -> dict:
         "failing_now": d.is_failing_now,
         "confirmed": d.is_confirmed,
         "description": d.description,
+        # Full troubleshooting (offline, from the manual) for the drill-down.
+        "page": info.get("page"),
+        "subsystem": info.get("subsystem"),
+        "failure_event": info.get("failure_event"),
+        "steps": info.get("steps"),
+        "note": info.get("note"),
     }
 
 
