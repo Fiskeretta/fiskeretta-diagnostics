@@ -504,3 +504,63 @@ async def drill_failing_dtcs(session: ElmSession, log: Log) -> None:
                 log("  freeze-frame: (none)")
         except (UdsError, asyncio.TimeoutError) as exc:
             log(f"  freeze-frame:  couldn't read ({exc})")
+
+
+# --- ECU discovery ---------------------------------------------------------
+
+DISCOVERY_START = 0x700
+DISCOVERY_END = 0x7EF
+
+
+async def _identify_ecu(session: ElmSession, request_id: int, response_id: int) -> Optional[str]:
+    """Best-effort: read an identification DID to hint at what a discovered ECU is."""
+    for did in (0xF197, 0xF187, 0xF18C, 0xF190):
+        try:
+            data = await read_data_by_identifier(session, request_id, response_id, did)
+        except (UdsError, asyncio.TimeoutError):
+            continue
+        text = "".join(ch for ch in bytes(data).decode("ascii", errors="ignore") if ch.isprintable()).strip()
+        if len(text) >= 3:
+            return text
+    return None
+
+
+async def discover_ecus(session: ElmSession, log: Optional[Log] = None,
+                        start: int = DISCOVERY_START, end: int = DISCOVERY_END) -> list:
+    """Probe diagnostic request IDs across [start, end] and report which ones an
+    ECU answers (response = request + 8). Separates already-known modules from
+    new finds, and tries to name the new ones via an identification DID."""
+    known = {req: name for name, (req, _resp) in MODULES.items()}
+    found: list = []
+    total = end - start + 1
+    if log:
+        log(f"Probing {total} diagnostic IDs (0x{start:03X}-0x{end:03X}); response = request + 8…")
+
+    for offset, req in enumerate(range(start, end + 1)):
+        resp = req + 8
+        await session.send(f"ATSH{req:03X}")
+        await session.send(f"ATCRA{resp:03X}")
+        try:
+            reply = await session.send("3E00", timeout=2.0)
+        except asyncio.TimeoutError:
+            continue
+        if any(err in reply.upper() for err in _ADAPTER_ERRORS):
+            continue
+        if not _extract_payload_bytes(reply):
+            continue
+
+        name = known.get(req)
+        entry = {"request_id": req, "response_id": resp, "module": name, "name_hint": None}
+        if not name:
+            entry["name_hint"] = await _identify_ecu(session, req, resp)
+        found.append(entry)
+        if log:
+            who = name.upper() if name else (f"NEW — {entry['name_hint']}" if entry["name_hint"] else "NEW (unidentified)")
+            log(f"  0x{req:03X} -> 0x{resp:03X}: {who}")
+        if log and offset and offset % 64 == 0:
+            log(f"  …{offset}/{total} probed, {len(found)} responding so far")
+
+    if log:
+        new = sum(1 for e in found if not e["module"])
+        log(f"Discovery complete — {len(found)} ECUs responding, {new} new beyond the {len(known)} already queried.")
+    return found

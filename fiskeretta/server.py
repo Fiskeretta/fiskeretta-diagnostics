@@ -98,6 +98,7 @@ async def _handle(payload: dict, ws: web.WebSocketResponse, log, send_status) ->
         "drill_failing": lambda: _manager.run(lambda s: uds.drill_failing_dtcs(s, log)),
         "scan": lambda: run_scan(ws, log),
         "saved_scans": lambda: send_saved_scans(ws),
+        "discover": lambda: run_discover(ws, log),
     }
     if command not in actions:
         return
@@ -146,6 +147,13 @@ async def run_scan(ws, log) -> None:
 async def send_saved_scans(ws) -> None:
     if not ws.closed:
         await ws.send_json({"type": "saved_scans", "scans": storage.list_scans()})
+
+
+async def run_discover(ws, log) -> None:
+    """Probe the bus for responding ECUs and report the findings."""
+    ecus = await _manager.run(lambda s: uds.discover_ecus(s, log))
+    if not ws.closed:
+        await ws.send_json({"type": "discovery", "ecus": ecus})
 
 
 async def run_code_detail(ws, module, code_str) -> None:

@@ -141,6 +141,8 @@
 
   <div id="diagnostics"></div>
 
+  <div id="discoveryResult"></div>
+
   <div id="savedWrap" style="display:none">
     <div class="tier"><span class="name">Saved scans</span><span class="rule"></span><span class="count">kept on disk</span></div>
     <div id="saved"></div>
@@ -177,7 +179,27 @@ ws.onmessage = (e) => {
   else if (m.type === "scan_result") renderScan(m.result);
   else if (m.type === "saved_scans") renderSaved(m.scans);
   else if (m.type === "code_detail") onCodeDetail(m);
+  else if (m.type === "discovery") onDiscovery(m);
 };
+
+function startDiscover(){
+  if (!connected || busy) return;
+  $("logbox").classList.add("open");
+  send("discover");
+}
+function onDiscovery(m){
+  const ecus = m.ecus || [];
+  const news = ecus.filter(e => !e.module).length;
+  let html = `<div class="tier"><span class="name">Discovered ECUs</span><span class="rule"></span><span class="count tnum">${ecus.length} responding · ${news} new</span></div>`;
+  html += `<div class="unreached"><div class="grid">`;
+  for (const e of ecus){
+    const id = "0x" + e.request_id.toString(16).toUpperCase();
+    const who = e.module ? e.module.toUpperCase() : (e.name_hint || "unidentified");
+    html += `<div class="uchip"><div class="ua mono">${id}</div><div class="un">${esc(who)}${e.module?"":" · new"}</div></div>`;
+  }
+  html += `</div></div>`;
+  $("discoveryResult").innerHTML = html;
+}
 
 function onConnection(m){
   connected = m.connected;
@@ -233,7 +255,7 @@ function renderDiagnostics(mods){
   }
   if (notReached.length){
     html += `<div class="tier"><span class="name">Not yet reached</span><span class="rule"></span><span class="count tnum">${notReached.length} modules</span></div>`;
-    html += `<div class="unreached"><div class="ureached-top"><span class="txt">These exist in the car but we don't have their addresses yet. A discovery scan will probe the bus to find them.</span><button class="btn primary" disabled title="coming soon">Discover modules</button></div><div class="grid">`;
+    html += `<div class="unreached"><div class="ureached-top"><span class="txt">These exist in the car but we don't have their addresses yet. Discovery probes the bus to find responding ECUs.</span><button class="btn primary" onclick="startDiscover()">Discover modules</button></div><div class="grid">`;
     for (const m of notReached) html += `<div class="uchip"><div class="ua">${esc(m.name.toUpperCase())}</div><div class="un">${esc(m.label)}</div></div>`;
     html += `</div></div>`;
   }
