@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Ocean Diag native app (macOS) and ad-hoc sign it.
+# Build the Fiskeretta Diagnostics native app (macOS) and ad-hoc sign it.
 # Run on the OS you're targeting — PyInstaller does not cross-compile.
 set -euo pipefail
 
@@ -7,9 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 pyinstaller --noconfirm --clean \
   --distpath "$ROOT/dist" --workpath "$ROOT/build" \
-  "$ROOT/packaging/ocean_diag.spec"
+  "$ROOT/packaging/fiskeretta.spec"
 
-APP="$ROOT/dist/Ocean Diag.app"
+APP="$ROOT/dist/Fiskeretta Diagnostics.app"
 if [ -d "$APP" ]; then
   xattr -cr "$APP" || true
   if codesign --force --deep --sign - "$APP" 2>/dev/null && codesign --verify "$APP" 2>/dev/null; then

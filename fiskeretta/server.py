@@ -1,5 +1,5 @@
 """
-Local web UI for ocean-diag.
+Local web UI for fiskeretta.
 
 Runs a tiny aiohttp server (same asyncio loop bleak uses) that serves a single
 page and drives a *persistent* BLE connection via a shared ConnectionManager:
@@ -7,8 +7,8 @@ the dongle is connected once (auto, on launch), remembered, and reused for every
 action — no rescan, no reconnect per click.
 
 Usage:
-    python3 -m ocean_diag.server      # then open http://localhost:8765
-    python3 -m ocean_diag.app         # native window (no browser)
+    python3 -m fiskeretta.server      # then open http://localhost:8765
+    python3 -m fiskeretta.app         # native window (no browser)
 """
 
 import asyncio
@@ -27,8 +27,8 @@ def _resolve_static_dir() -> Path:
     if getattr(sys, "frozen", False):
         base = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
         candidates = [
-            base / "ocean_diag" / "static",
-            base.parent / "Resources" / "ocean_diag" / "static",  # macOS .app split
+            base / "fiskeretta" / "static",
+            base.parent / "Resources" / "fiskeretta" / "static",  # macOS .app split
         ]
         for c in candidates:
             if (c / "index.html").is_file():

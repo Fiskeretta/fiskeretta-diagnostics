@@ -8,7 +8,7 @@ OBD2 port with the ignition in "Key On, Engine Off" — the car doesn't need to
 be in Ready/driving state.
 
 Usage:
-    python3 -m ocean_diag.scan
+    python3 -m fiskeretta.scan
 """
 
 import asyncio

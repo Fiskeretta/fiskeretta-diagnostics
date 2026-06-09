@@ -18,7 +18,7 @@ from bleak import BleakClient, BleakScanner
 from . import core
 from .core import ElmSession, Log
 
-CONFIG_DIR = Path.home() / ".config" / "ocean-diag"
+CONFIG_DIR = Path.home() / ".config" / "fiskeretta"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 # One-time adapter setup: reset, echo off, ISO 15765-4 CAN, auto-format, long msgs.

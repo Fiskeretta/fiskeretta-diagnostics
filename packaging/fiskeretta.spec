@@ -1,14 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for Ocean Diag.
+PyInstaller spec for Fiskeretta Diagnostics.
 
 Build (run on each target OS — no cross-compiling):
     pip3 install -r requirements.txt -r requirements-dev.txt
-    pyinstaller packaging/ocean_diag.spec
+    pyinstaller packaging/fiskeretta.spec
 
 Output:
-    macOS:   dist/Ocean Diag.app
-    Windows: dist/Ocean Diag/Ocean Diag.exe
+    macOS:   dist/Fiskeretta Diagnostics.app
+    Windows: dist/Fiskeretta Diagnostics/Fiskeretta Diagnostics.exe
 """
 import os
 import sys
@@ -16,7 +16,7 @@ import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
-sys.path.insert(0, ROOT)  # make `ocean_diag` importable for collect_* below
+sys.path.insert(0, ROOT)  # make `fiskeretta` importable for collect_* below
 
 # Optional icon: drop packaging/icon.icns (macOS) or packaging/icon.ico (Windows).
 _icns = os.path.join(SPECPATH, "icon.icns")
@@ -28,8 +28,8 @@ elif sys.platform == "win32" and os.path.exists(_ico):
 else:
     icon = None
 
-# Bundle ocean_diag/static/* and pull in dynamically-imported backends.
-datas = collect_data_files("ocean_diag")
+# Bundle fiskeretta/static/* and pull in dynamically-imported backends.
+datas = collect_data_files("fiskeretta")
 hiddenimports = collect_submodules("bleak") + collect_submodules("webview")
 
 a = Analysis(
@@ -51,7 +51,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="Ocean Diag",
+    name="Fiskeretta Diagnostics",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -65,19 +65,19 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="Ocean Diag",
+    name="Fiskeretta Diagnostics",
 )
 
 if sys.platform == "darwin":
     app = BUNDLE(
         coll,
-        name="Ocean Diag.app",
+        name="Fiskeretta Diagnostics.app",
         icon=icon,
-        bundle_identifier="com.oceandiag.app",
+        bundle_identifier="com.fiskeretta.diagnostics",
         info_plist={
             # Required or macOS silently denies Bluetooth to the bundled app.
-            "NSBluetoothAlwaysUsageDescription": "Ocean Diag uses Bluetooth to talk to your OBD2 dongle.",
-            "NSBluetoothPeripheralUsageDescription": "Ocean Diag uses Bluetooth to talk to your OBD2 dongle.",
+            "NSBluetoothAlwaysUsageDescription": "Fiskeretta Diagnostics uses Bluetooth to talk to your OBD2 dongle.",
+            "NSBluetoothPeripheralUsageDescription": "Fiskeretta Diagnostics uses Bluetooth to talk to your OBD2 dongle.",
             "CFBundleShortVersionString": "0.1.0",
             "CFBundleVersion": "0.1.0",
             "NSHighResolutionCapable": True,

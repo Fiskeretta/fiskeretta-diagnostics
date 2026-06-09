@@ -1,6 +1,6 @@
-"""PyInstaller entry point — launches the native Ocean Diag window."""
+"""PyInstaller entry point — launches the native Fiskeretta Diagnostics window."""
 
-from ocean_diag.app import main
+from fiskeretta.app import main
 
 if __name__ == "__main__":
     main()

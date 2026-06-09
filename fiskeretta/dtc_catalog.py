@@ -1,7 +1,7 @@
 """
 Optional DTC description catalog.
 
-The ocean-diag tool ships with no DTC descriptions of its own — Fisker never
+The fiskeretta tool ships with no DTC descriptions of its own — Fisker never
 published a public DTC table. If the user has a local copy of the Fisker DTC
 manual index (a JSON list of {dtc, ftb, description, page} rows, where `ftb`
 is the raw 24-bit numeric code), we load it at runtime and translate scan
@@ -9,7 +9,7 @@ results. No catalog present → scans still work, just without descriptions.
 
 The catalog data is deliberately kept *outside* this repository: the tool
 stays clean/open, the proprietary manual stays the user's own local copy.
-Point OCEAN_DIAG_DTC_CATALOG at a dtc_index.json, or drop one at one of the
+Point FISKERETTA_DTC_CATALOG at a dtc_index.json, or drop one at one of the
 default search paths below.
 """
 
@@ -24,10 +24,10 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 # Search order: explicit env var, then conventional locations (dev tree first,
 # then packaged-app locations a user can drop the catalog into).
 _CANDIDATES = [
-    os.environ.get("OCEAN_DIAG_DTC_CATALOG"),
+    os.environ.get("FISKERETTA_DTC_CATALOG"),
     _REPO_ROOT.parent / "docs" / "DTC" / "dtc_index.json",  # sibling docs/ dir (dev)
     _REPO_ROOT / "docs" / "DTC" / "dtc_index.json",
-    Path.home() / ".config" / "ocean-diag" / "dtc_index.json",  # user data (packaged)
+    Path.home() / ".config" / "fiskeretta" / "dtc_index.json",  # user data (packaged)
     Path(sys.executable).parent / "dtc_index.json",            # next to the app binary
 ]
 
@@ -114,7 +114,7 @@ def _load_pages() -> dict:
     candidates = [
         _catalog_dir / _PAGE_FILENAME if _catalog_dir else None,
         _REPO_ROOT.parent / "docs" / "DTC" / _PAGE_FILENAME,
-        Path.home() / ".config" / "ocean-diag" / _PAGE_FILENAME,
+        Path.home() / ".config" / "fiskeretta" / _PAGE_FILENAME,
     ]
     for cand in candidates:
         if not cand or not Path(cand).is_file():

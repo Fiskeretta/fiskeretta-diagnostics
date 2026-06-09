@@ -1,5 +1,5 @@
 """
-Native-window launcher for ocean-diag.
+Native-window launcher for fiskeretta.
 
 Runs the aiohttp server (+ bleak) on a background thread and shows the existing
 web UI in a native OS window via pywebview — no browser, no terminal. Cross-
@@ -7,7 +7,7 @@ platform: WKWebView on macOS, WebView2 on Windows. Connection persistence and
 device memory come from the server's shared ConnectionManager, so launching the
 app auto-connects to the remembered dongle.
 
-    python3 -m ocean_diag.app
+    python3 -m fiskeretta.app
 """
 
 import asyncio
@@ -66,9 +66,9 @@ def main() -> None:
     ready = threading.Event()
     threading.Thread(target=_run_server, args=(ready,), daemon=True).start()
     if not ready.wait(timeout=10):
-        raise SystemExit("ocean-diag server failed to start within 10s.")
+        raise SystemExit("fiskeretta server failed to start within 10s.")
 
-    window = webview.create_window("Ocean Diag", URL, width=900, height=720, min_size=(640, 480))
+    window = webview.create_window("Fiskeretta Diagnostics", URL, width=900, height=720, min_size=(640, 480))
     try:
         window.events.closing += lambda: _shutdown()
     except Exception:
