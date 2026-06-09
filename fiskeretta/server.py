@@ -18,7 +18,7 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
-from . import report, storage, uds
+from . import registry, report, storage, uds
 from .connection import ConnectionManager
 
 def _resolve_static_dir() -> Path:
@@ -163,7 +163,10 @@ async def run_code_detail(ws, module, code_str) -> None:
     """On-demand freeze-frame read for one code — when/where it occurred."""
     detail = {"available": False}
     try:
-        detail = await _manager.run(lambda s: uds.read_code_detail(s, module, int(code_str, 16)))
+        target = registry.scan_targets().get(module)
+        if target:
+            detail = await _manager.run(
+                lambda s: uds.read_code_detail(s, target["request"], target["response"], int(code_str, 16)))
     except Exception as exc:
         detail = {"available": False, "error": str(exc)}
     if not ws.closed:

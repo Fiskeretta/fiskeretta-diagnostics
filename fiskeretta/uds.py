@@ -299,12 +299,14 @@ async def read_dtc_snapshot(
     return bytes(payload[6:])
 
 
-async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None) -> dict:
-    """Query every known module for its DTCs. A module that doesn't answer
-    (unsupported service, no response, etc.) maps to None rather than
-    aborting the whole scan."""
+async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None, targets: Optional[dict] = None) -> dict:
+    """Query each target module for its DTCs. `targets` maps key -> (request_id,
+    response_id); defaults to the built-in MODULES. A module that doesn't answer
+    maps to None rather than aborting the whole scan."""
+    if targets is None:
+        targets = dict(MODULES)
     report: dict = {}
-    for name, (request_id, response_id) in MODULES.items():
+    for name, (request_id, response_id) in targets.items():
         if log:
             log(f"Querying {name.upper()} (0x{request_id:03X} -> 0x{response_id:03X}) for DTCs...")
         try:
@@ -446,11 +448,8 @@ def parse_snapshot_records(data: bytes) -> list[dict]:
     return records
 
 
-async def read_code_detail(session: ElmSession, module: str, code: int) -> dict:
+async def read_code_detail(session: ElmSession, request_id: int, response_id: int, code: int) -> dict:
     """On-demand: read one code's freeze-frame and report when/where it occurred."""
-    if module not in MODULES:
-        return {"available": False}
-    request_id, response_id = MODULES[module]
     await configure_addressing(session, request_id, response_id)
     try:
         snap = await read_dtc_snapshot(session, request_id, response_id, code)
@@ -526,17 +525,21 @@ async def _identify_ecu(session: ElmSession, request_id: int, response_id: int) 
 
 
 async def _identify_by_dtc(session: ElmSession, request_id: int, response_id: int) -> Optional[str]:
-    """Name an ECU by reading one of its DTCs and looking up which module
-    section that code lives in, per the manual (the reliable identity)."""
+    """Name an ECU from its DTCs: look up which manual section each code lives in
+    and take the most common — robust against shared bus/comms codes that show up
+    in several modules' sections."""
     try:
         dtcs = await read_dtcs(session, request_id, response_id)
     except (UdsError, asyncio.TimeoutError):
         return None
+    tally: dict = {}
     for dtc in dtcs:
         name = dtc_catalog.module_for_code(dtc.code)
         if name:
-            return name
-    return None
+            tally[name] = tally.get(name, 0) + 1
+    if not tally:
+        return None
+    return max(tally, key=tally.get)
 
 
 async def discover_ecus(session: ElmSession, log: Optional[Log] = None,

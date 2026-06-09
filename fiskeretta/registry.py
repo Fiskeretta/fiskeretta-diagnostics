@@ -1,0 +1,60 @@
+"""
+Runtime module registry — the set of modules a scan targets.
+
+Combines the built-in modules (uds.MODULES + friendly labels) with whatever
+discovery has found and saved (discovery.json). Once you discover the rest of
+the bus, every scan includes those modules automatically — no re-running.
+Manual-documented modules not yet discovered are reported as "not yet reached".
+"""
+
+from . import modules as _modules
+from . import storage
+from .uds import MODULES
+
+
+def _norm(name: str) -> str:
+    """Normalize a module name to a key (lowercase, hyphens/spaces -> underscore)."""
+    return name.lower().replace("-", "_").replace(" ", "_")
+
+
+def _discovered_ecus() -> list:
+    data = storage.load_discovery()
+    return data.get("ecus", []) if data else []
+
+
+def scan_targets() -> dict:
+    """key -> {label, request, response} for every module a scan should query."""
+    targets: dict = {}
+    seen_requests = set()
+
+    for name, (req, resp) in MODULES.items():
+        targets[name] = {"label": _modules.label(name), "request": req, "response": resp}
+        seen_requests.add(req)
+
+    for ecu in _discovered_ecus():
+        req = ecu.get("request_id")
+        if req is None or req in seen_requests:
+            continue
+        seen_requests.add(req)
+        mod_name = ecu.get("module_name")
+        key = _norm(mod_name) if mod_name else f"ecu_{req:03x}"
+        if key in targets:  # multiple ECUs share a name (e.g. four radars) — keep both
+            key = f"{key}_{req:03x}"
+        targets[key] = {
+            "label": mod_name or f"ECU 0x{req:03X}",
+            "request": req,
+            "response": ecu.get("response_id"),
+        }
+    return targets
+
+
+def label(key: str) -> str:
+    target = scan_targets().get(key)
+    return target["label"] if target else key.upper()
+
+
+def not_reached() -> list:
+    """Manual-documented modules not yet discovered, as (key, label) pairs."""
+    discovered = {_norm(e["module_name"]) for e in _discovered_ecus() if e.get("module_name")}
+    discovered |= set(MODULES.keys())
+    return [(key, lbl) for key, lbl in _modules.NOT_YET_REACHED if key not in discovered]

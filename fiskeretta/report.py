@@ -18,7 +18,7 @@ unreachable, and finally the not-yet-reached modules. Only "noteworthy" codes
 from datetime import datetime, timezone
 from typing import Optional
 
-from . import dtc_catalog, modules, uds
+from . import dtc_catalog, modules, registry, uds
 from . import vin as vinmod
 
 ACTIVE = "active"
@@ -48,13 +48,18 @@ def _dtc_dict(d: uds.Dtc) -> dict:
     }
 
 
-def build_from_report(report: dict, vehicle: Optional[dict] = None) -> dict:
-    """Pure transform: raw {module_name: [Dtc] | None} -> structured result."""
+def build_from_report(report: dict, vehicle: Optional[dict] = None,
+                      labels: Optional[dict] = None,
+                      not_reached_list: Optional[list] = None) -> dict:
+    """Pure transform: raw {module_key: [Dtc] | None} -> structured result.
+    `labels` maps key -> display label; `not_reached_list` is the (key, label)
+    list of manual modules not yet discovered."""
     mods = []
     active_total = historical_total = reachable = 0
+    nr = not_reached_list if not_reached_list is not None else modules.NOT_YET_REACHED
 
     for name, dtcs in report.items():
-        lbl = modules.label(name)
+        lbl = (labels.get(name) if labels else None) or modules.label(name)
         if dtcs is None:
             mods.append({"name": name, "label": lbl, "status": UNREACHABLE,
                          "counts": {"active": 0, "historical": 0}, "codes": []})
@@ -70,7 +75,7 @@ def build_from_report(report: dict, vehicle: Optional[dict] = None) -> dict:
         mods.append({"name": name, "label": lbl, "status": status,
                      "counts": {"active": active, "historical": historical}, "codes": codes})
 
-    for name, lbl in modules.NOT_YET_REACHED:
+    for name, lbl in nr:
         mods.append({"name": name, "label": lbl, "status": NOT_REACHED,
                      "counts": {"active": 0, "historical": 0}, "codes": []})
 
@@ -84,7 +89,7 @@ def build_from_report(report: dict, vehicle: Optional[dict] = None) -> dict:
             "active": active_total,
             "historical": historical_total,
             "modules_reachable": reachable,
-            "modules_total": len(report) + len(modules.NOT_YET_REACHED),
+            "modules_total": len(report) + len(nr),
         },
         "modules": mods,
     }
@@ -105,10 +110,13 @@ async def build_scan_result(session, log=None) -> dict:
         if log:
             log(f"VIN read failed: {exc}")
 
+    targets_full = registry.scan_targets()
+    targets = {k: (t["request"], t["response"]) for k, t in targets_full.items()}
+    labels = {k: t["label"] for k, t in targets_full.items()}
     if log:
-        log("Scanning all modules for DTCs…")
-    report = await uds.read_all_dtcs(session, log=None)
-    result = build_from_report(report, vehicle)
+        log(f"Scanning {len(targets)} modules for DTCs…")
+    report = await uds.read_all_dtcs(session, log=None, targets=targets)
+    result = build_from_report(report, vehicle, labels=labels, not_reached_list=registry.not_reached())
 
     s = result["summary"]
     if log:

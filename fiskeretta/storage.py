@@ -67,3 +67,10 @@ def save_discovery(ecus: list) -> Optional[Path]:
         return path
     except OSError:
         return None
+
+
+def load_discovery() -> Optional[dict]:
+    try:
+        return json.loads((CONFIG_DIR / "discovery.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
