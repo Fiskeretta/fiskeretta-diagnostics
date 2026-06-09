@@ -69,10 +69,10 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
         if msg.type != WSMsgType.TEXT:
             continue
         try:
-            command = json.loads(msg.data).get("command")
+            payload = json.loads(msg.data)
         except (json.JSONDecodeError, AttributeError):
             continue
-        await _handle(command, ws, log, send_status)
+        await _handle(payload, ws, log, send_status)
 
     return ws
 
@@ -84,7 +84,12 @@ async def _auto_connect(send_status) -> None:
     await send_status()
 
 
-async def _handle(command: str, ws: web.WebSocketResponse, log, send_status) -> None:
+async def _handle(payload: dict, ws: web.WebSocketResponse, log, send_status) -> None:
+    command = payload.get("command")
+    if command == "code_detail":
+        await run_code_detail(ws, payload.get("module"), payload.get("code"))
+        return
+
     actions = {
         "connect": lambda: _manager.connect(),
         "disconnect": lambda: _manager.disconnect(),
@@ -141,6 +146,17 @@ async def run_scan(ws, log) -> None:
 async def send_saved_scans(ws) -> None:
     if not ws.closed:
         await ws.send_json({"type": "saved_scans", "scans": storage.list_scans()})
+
+
+async def run_code_detail(ws, module, code_str) -> None:
+    """On-demand freeze-frame read for one code — when/where it occurred."""
+    detail = {"available": False}
+    try:
+        detail = await _manager.run(lambda s: uds.read_code_detail(s, module, int(code_str, 16)))
+    except Exception as exc:
+        detail = {"available": False, "error": str(exc)}
+    if not ws.closed:
+        await ws.send_json({"type": "code_detail", "module": module, "code": code_str, **detail})
 
 
 def build_app() -> web.Application:

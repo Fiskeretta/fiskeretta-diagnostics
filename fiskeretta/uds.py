@@ -403,6 +403,67 @@ def _format_snapshot(data: bytes) -> list[str]:
     return lines
 
 
+def parse_snapshot_records(data: bytes) -> list[dict]:
+    """Structured variant of _format_snapshot: per freeze-frame record, pull out
+    the odometer (EFF8) and timestamp (EFF6) — used to show when/where a code
+    occurred. Stops cleanly at any DID whose length we don't know."""
+    records: list[dict] = []
+    i, n = 0, len(data)
+    first = True
+    while i < n:
+        if not first:
+            while i < n and data[i] == 0x00:
+                i += 1
+            if i >= n:
+                break
+        first = False
+        if i + 2 > n:
+            break
+        rec, nid = data[i], data[i + 1]
+        i += 2
+        odometer = None
+        timestamp = None
+        timestamp_unset = False
+        for _ in range(nid):
+            if i + 2 > n:
+                break
+            did = (data[i] << 8) | data[i + 1]
+            i += 2
+            length = SNAPSHOT_DID_LEN.get(did)
+            if length is None:
+                break
+            val = data[i:i + length]
+            i += length
+            if did == 0xEFF8:
+                odometer = round(_odometer_miles(val))
+            elif did == 0xEFF6:
+                if val == b"\x00" * 6:
+                    timestamp_unset = True
+                else:
+                    timestamp = _format_timestamp(val)
+        records.append({"record": rec, "odometer_mi": odometer,
+                        "timestamp": timestamp, "timestamp_unset": timestamp_unset})
+    return records
+
+
+async def read_code_detail(session: ElmSession, module: str, code: int) -> dict:
+    """On-demand: read one code's freeze-frame and report when/where it occurred."""
+    if module not in MODULES:
+        return {"available": False}
+    request_id, response_id = MODULES[module]
+    await configure_addressing(session, request_id, response_id)
+    try:
+        snap = await read_dtc_snapshot(session, request_id, response_id, code)
+    except (UdsError, asyncio.TimeoutError):
+        return {"available": False}
+    records = parse_snapshot_records(snap)
+    if not records:
+        return {"available": False}
+    dated = [r for r in records if r.get("odometer_mi") is not None]
+    latest = max(dated, key=lambda r: r["odometer_mi"]) if dated else records[-1]
+    return {"available": True, "records": records, "latest": latest}
+
+
 async def drill_failing_dtcs(session: ElmSession, log: Log) -> None:
     """On a live session: find every currently-failing DTC, then ask its module
     for the extended data (occurrence counter / aging) and freeze-frame

@@ -165,6 +165,7 @@ let connected = false, busy = false, started = false, lastResult = null;
 
 const ws = new WebSocket(`ws://${location.host}/ws`);
 const send = (command) => ws.send(JSON.stringify({command}));
+const sendMsg = (obj) => ws.send(JSON.stringify(obj));
 
 ws.onopen = () => log("Connected to Fiskeretta Diagnostics.");
 ws.onclose = () => { connected = false; setStatus({connected:false, device:null}); $("connText").textContent = "server connection lost"; };
@@ -175,6 +176,7 @@ ws.onmessage = (e) => {
   else if (m.type === "connection") onConnection(m);
   else if (m.type === "scan_result") renderScan(m.result);
   else if (m.type === "saved_scans") renderSaved(m.scans);
+  else if (m.type === "code_detail") onCodeDetail(m);
 };
 
 function onConnection(m){
@@ -249,7 +251,7 @@ function moduleCard(m){
   if (m.status === "clear") badges += `<span class="pill green">clear</span>`;
   if (m.status === "unreachable") badges += `<span class="pill gray">no response</span>`;
   const caret = m.codes.length ? `<span class="caret mcaret">▸</span>` : "";
-  const codes = m.codes.map(codeRow).join("");
+  const codes = m.codes.map(c => codeRow(c, m.name)).join("");
   const clickable = m.codes.length ? ' onclick="this.parentElement.classList.toggle(\'open\')"' : "";
   return `<div class="mod${flagged}${empty}${slim}${muted}">
     <div class="mhead"${clickable}>
@@ -268,19 +270,20 @@ function statusDecode(b){
   return `0x${b.toString(16).toUpperCase().padStart(2,"0")}${parts.length?" · "+parts.join(" + "):""}`;
 }
 
-function codeRow(c){
+function codeRow(c, mod){
   const failing = c.failing_now;
   const facts = [
     ["Status", statusDecode(c.status_byte)],
     ["SAE / page", `${esc(c.j2012||"—")}${c.page?" · p"+c.page:""}`],
   ];
-  let drill = `<div class="facts">${facts.map(([k,v])=>`<div class="fact"><div class="k">${k}</div><div class="v mono">${v}</div></div>`).join("")}</div>`;
+  let drill = `<div class="dsec"><h4>When it happened</h4><p class="occ">—</p></div>`;
+  drill += `<div class="facts">${facts.map(([k,v])=>`<div class="fact"><div class="k">${k}</div><div class="v mono">${v}</div></div>`).join("")}</div>`;
   const meaning = c.subsystem || c.description;
   if (meaning) drill += `<div class="dsec"><h4>What it means</h4><p>${esc(meaning)}</p></div>`;
   if (c.failure_event) drill += `<div class="dsec"><h4>Failure condition</h4><p>${esc(c.failure_event)}</p></div>`;
   if (c.steps) drill += `<div class="dsec"><h4>Diagnostic steps</h4><p>${esc(c.steps)}</p></div>`;
   drill += `<div class="src">From the Fisker DTC manual</div>`;
-  return `<div class="code" onclick="this.classList.toggle('open')">
+  return `<div class="code" data-module="${esc(mod)}" data-code="${esc(c.code)}" onclick="toggleCode(this)">
     <span class="cdot ${failing?"red":"amber"}"></span>
     <div class="cmid">
       <div class="cline"><span class="ccode mono">${esc(c.code)}</span><span class="cflag ${failing?"red":"amber"}">${failing?"Failing now":"Historical"}</span></div>
@@ -289,6 +292,34 @@ function codeRow(c){
     </div>
     <span class="caret ccaret">▸</span>
   </div>`;
+}
+
+function toggleCode(el){
+  const opening = !el.classList.contains("open");
+  el.classList.toggle("open");
+  if (opening && !el.dataset.fetched){
+    el.dataset.fetched = "1";
+    const occ = el.querySelector(".occ");
+    if (occ) occ.textContent = "Reading fault history…";
+    sendMsg({command:"code_detail", module: el.dataset.module, code: el.dataset.code});
+  }
+}
+
+function onCodeDetail(m){
+  const el = document.querySelector(`.code[data-module="${m.module}"][data-code="${m.code}"]`);
+  if (!el) return;
+  const occ = el.querySelector(".occ");
+  if (!occ) return;
+  if (!m.available){ occ.textContent = "No freeze-frame stored for this code."; return; }
+  const L = m.latest || {};
+  const parts = [];
+  if (L.odometer_mi != null) parts.push(L.odometer_mi.toLocaleString() + " mi");
+  if (L.timestamp) parts.push(L.timestamp);
+  else if (L.timestamp_unset) parts.push("clock not set");
+  let txt = parts.join(" · ") || "recorded (no odometer/time)";
+  const n = (m.records || []).length;
+  if (n > 1) txt += ` — seen ${n}×`;
+  occ.textContent = txt;
 }
 
 function renderSaved(scans){
