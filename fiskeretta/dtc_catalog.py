@@ -52,7 +52,7 @@ def _load() -> dict:
         if not path.is_file():
             continue
         try:
-            rows = json.loads(path.read_text())
+            rows = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
         for row in rows:
@@ -66,12 +66,20 @@ def _load() -> dict:
 
 
 def is_loaded() -> bool:
-    return bool(_load_combined() or _load())
+    # Never let a catalog problem propagate — this runs inside the websocket
+    # handler on every connect, so a raised error here drops the connection.
+    try:
+        return bool(_load_combined() or _load())
+    except Exception:
+        return False
 
 
 def count() -> int:
     """How many codes the active catalog can describe — shown in the About box."""
-    return len(_load_combined()) or len(_load())
+    try:
+        return len(_load_combined()) or len(_load())
+    except Exception:
+        return 0
 
 
 def describe(code: int) -> Optional[str]:
@@ -130,7 +138,7 @@ def _load_pages() -> dict:
         if not cand or not Path(cand).is_file():
             continue
         try:
-            for line in Path(cand).read_text().splitlines():
+            for line in Path(cand).read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line:
                     continue
@@ -203,7 +211,7 @@ def _load_extended() -> dict:
         if not cand or not Path(cand).is_file():
             continue
         try:
-            data = json.loads(Path(cand).read_text())
+            data = json.loads(Path(cand).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         for key, row in data.items():
@@ -252,7 +260,7 @@ def _load_combined() -> dict:
         if not cand or not Path(cand).is_file():
             continue
         try:
-            data = json.loads(Path(cand).read_text())
+            data = json.loads(Path(cand).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         for key, row in data.items():

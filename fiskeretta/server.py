@@ -46,7 +46,14 @@ _manager = ConnectionManager()
 
 
 async def index(request: web.Request) -> web.Response:
-    return web.FileResponse(STATIC_DIR / "index.html")
+    # Inject the app version into the page so About/the footer show it immediately,
+    # without depending on the websocket "app" message arriving.
+    try:
+        html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+        return web.Response(text=html.replace("__FK_VERSION__", __version__),
+                            content_type="text/html")
+    except OSError:
+        return web.FileResponse(STATIC_DIR / "index.html")
 
 
 async def ws_handler(request: web.Request) -> web.WebSocketResponse:

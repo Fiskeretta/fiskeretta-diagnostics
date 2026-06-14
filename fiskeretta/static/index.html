@@ -163,7 +163,7 @@
   .clrow .clc .pill{font-size:10px;padding:2px 7px}
 </style>
 </head>
-<body>
+<body data-version="__FK_VERSION__">
 <div class="app">
   <div class="top">
     <div class="conn"><span class="pulse" id="dot"></span><div><div class="dev" id="dev">Fiskeretta</div><div class="st" id="connText">starting…</div></div></div>
@@ -245,10 +245,15 @@ function maybeAutoScan(){
   send("scan");
 }
 
-let appVersion="", catalogLoaded=false, catalogCount=0;
+// Seed the version from the server-injected body attribute so About/the footer
+// show it immediately, independent of the websocket. The "__"-guard keeps the
+// raw placeholder from leaking if the page is ever served without substitution.
+let appVersion=(()=>{ const v=document.body.dataset.version||""; return /^__.*__$/.test(v)?"":v; })();
+let catalogLoaded=false, catalogCount=0;
+function paintVersion(){ const v=$("ver"); if(v) v.textContent=appVersion?("v"+appVersion):""; }
 function onApp(m){
-  appVersion=m.version||""; catalogLoaded=!!m.catalog; catalogCount=m.catalog_count||0;
-  const v=$("ver"); if(v) v.textContent=appVersion?("v"+appVersion):"";
+  appVersion=m.version||appVersion; catalogLoaded=!!m.catalog; catalogCount=m.catalog_count||0;
+  paintVersion();
 }
 
 const DISCLAIMER_HTML=`Fiskeretta is a free, community-built diagnostic tool with <b style="color:var(--text)">no warranty of any kind</b>. It reads and clears diagnostic codes on your Fisker Ocean through the OBD2 port.<br><br>You use it <b style="color:var(--text)">entirely at your own risk</b>. The authors accept no responsibility for any damage, data loss, or consequences to your vehicle, adapter, or anything else arising from its use. Clearing codes permanently erases on-car diagnostic history. Only use the app while the vehicle is safely parked — never while driving.`;
@@ -700,7 +705,7 @@ window.addEventListener("scroll",()=>{ tipEl=null; tip.classList.remove("show");
   ov.querySelector("#discOk").onclick=()=>{ try{ localStorage.setItem("fk_disclaimer","1"); }catch(e){} ov.remove(); accepted=true; maybeAutoScan(); };
 })();
 
-renderNav(); renderPanel();
+renderNav(); renderPanel(); paintVersion();
 </script>
 </body>
 </html>

@@ -39,7 +39,7 @@ T = TypeVar("T")
 
 def _load_saved_address() -> Optional[str]:
     try:
-        return json.loads(CONFIG_FILE.read_text()).get("device_address")
+        return json.loads(CONFIG_FILE.read_text(encoding="utf-8")).get("device_address")
     except (OSError, json.JSONDecodeError):
         return None
 
@@ -47,7 +47,7 @@ def _load_saved_address() -> Optional[str]:
 def _save_device(address: str, name: Optional[str]) -> None:
     try:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps({"device_address": address, "device_name": name}, indent=2))
+        CONFIG_FILE.write_text(json.dumps({"device_address": address, "device_name": name}, indent=2), encoding="utf-8")
     except OSError:
         pass
 

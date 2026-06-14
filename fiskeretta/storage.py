@@ -24,7 +24,7 @@ def save_scan(result: dict) -> Optional[Path]:
         while path.exists():
             path = SCANS_DIR / f"scan-{stamp}-{n}.json"
             n += 1
-        path.write_text(json.dumps(result, indent=2))
+        path.write_text(json.dumps(result, indent=2), encoding="utf-8")
         return path
     except OSError:
         return None
@@ -37,8 +37,8 @@ def list_scans() -> list[dict]:
     out = []
     for path in sorted(SCANS_DIR.glob("scan-*.json"), reverse=True):
         try:
-            result = json.loads(path.read_text())
-        except (OSError, json.JSONDecodeError):
+            result = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
             continue
         summary = result.get("summary", {})
         out.append({
@@ -52,8 +52,8 @@ def list_scans() -> list[dict]:
 
 def load_scan(scan_id: str) -> Optional[dict]:
     try:
-        return json.loads((SCANS_DIR / f"{scan_id}.json").read_text())
-    except (OSError, json.JSONDecodeError):
+        return json.loads((SCANS_DIR / f"{scan_id}.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
 
@@ -85,7 +85,7 @@ def save_discovery(ecus: list) -> Optional[Path]:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         path = CONFIG_DIR / "discovery.json"
         path.write_text(json.dumps(
-            {"discovered_at": datetime.now(timezone.utc).isoformat(), "ecus": ecus}, indent=2))
+            {"discovered_at": datetime.now(timezone.utc).isoformat(), "ecus": ecus}, indent=2), encoding="utf-8")
         return path
     except OSError:
         return None
@@ -93,6 +93,6 @@ def save_discovery(ecus: list) -> Optional[Path]:
 
 def load_discovery() -> Optional[dict]:
     try:
-        return json.loads((CONFIG_DIR / "discovery.json").read_text())
-    except (OSError, json.JSONDecodeError):
+        return json.loads((CONFIG_DIR / "discovery.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
