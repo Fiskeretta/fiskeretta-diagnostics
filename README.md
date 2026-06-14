@@ -14,16 +14,14 @@ the DTC manual — plain-English descriptions and repair steps.
 
 ## Quick start (for drivers)
 
-You need one thing: a **Vgate vLinker FD+** Bluetooth OBD2 adapter (about $40).
+You need a **Vgate vLinker FD+** Bluetooth OBD2 adapter.
 
-1. **Plug the vLinker** into the OBD2 port — it's under the dash, just above
-   your left knee on the Ocean.
-2. **Switch the car to ON (Ready).** Sit in the driver's seat with your foot
-   *off* the brake and press START once; the dash should light up. The car must
-   be awake or the diagnostic bus is asleep and nothing will answer.
-3. **Open Fiskeretta.** On first launch you'll see a short safety notice — read
+1. **Plug the vLinker** into the OBD2 port — it's under the dash, near your left knee.
+2. **Switch the car to ON (Ready).** The car must be awake or the diagnostic bus
+   is asleep and nothing will answer.
+5. **Open Fiskeretta.** On first launch you'll see a short safety notice — read
    it and click **Continue**.
-4. That's it. The app finds the dongle over Bluetooth, connects on its own, and
+6. That's it. The app finds the dongle over Bluetooth, connects on its own, and
    automatically reads every module. No pairing, no settings.
 
 > **First-launch security warning (one time).** The app isn't code-signed, so
