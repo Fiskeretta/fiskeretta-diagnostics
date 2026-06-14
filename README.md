@@ -57,12 +57,19 @@ You need a **Vgate vLinker FD+** Bluetooth OBD2 adapter.
 
 - **Active faults** — what's wrong *right now*. Start here.
 - **Historical** — codes the car logged before but isn't reporting now.
+  Benign network/communication codes (the bus-timeout noise a parked EV
+  re-logs every time you clear) are tucked into a collapsed "communication"
+  group so they don't read as real faults.
 - **Healthy / Unreachable** — modules that answered clean, or didn't answer.
+- **History** — a timeline of your scans and clears; click any scan to see
+  what changed since the previous one. Expanding a code shows its history,
+  too, so you can tell a recurring fault from a one-off.
 - Click any code to expand it: when it happened, what it means, and the repair
   steps from the Fisker service manual.
 - **Export for AI** — copies a ready-made prompt (your active faults + context)
   to paste into ChatGPT/Claude for a plain-English second opinion.
-- **Tools** — Clear DTC codes from your car or discover new modules not yet known to the app.
+- **Tools** — clear DTC codes, discover new modules, check for generic OBD,
+  sweep the BMS for live-data identifiers, and export/import your history.
 - **About** (bottom-left) — version number and the safety notice again.
 
 **Safety:** only use it while the car is safely **parked** — never while
@@ -76,6 +83,14 @@ driving. Clearing codes permanently erases the car's stored diagnostic history.
   *historical* vs noise, with per-module counts.
 - Drills into a fault for its freeze-frame (odometer + timestamp decoded) and,
   if you supply the DTC manual, the full troubleshooting writeup.
+- Keeps an append-only **history** of scans and clears, with a per-scan diff and
+  per-code recurrence view; classifies benign communication codes separately.
+- **Tools:** confirms the car is UDS-only (generic-OBD probe), and an
+  experimental **BMS DID sweep** that discovers live-data identifiers — the
+  groundwork for HV state of charge / health, cell voltages and temperatures
+  (no public DID list exists for the Ocean, so the app discovers them).
+- Stores its data in the OS-native per-user folder (survives app updates) and
+  can **export / import** your whole history as a zip.
 - Runs as a native desktop app (macOS / Windows) or in a browser.
 
 ## Build / run
