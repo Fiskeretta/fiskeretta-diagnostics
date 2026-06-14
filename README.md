@@ -49,6 +49,7 @@ You need a **Vgate vLinker FD+** Bluetooth OBD2 adapter.
   steps from the Fisker service manual.
 - **Export for AI** — copies a ready-made prompt (your active faults + context)
   to paste into ChatGPT/Claude for a plain-English second opinion.
+- **Tools** — Clear DTC codes from your car or discover new modules not yet known to the app.
 - **About** (bottom-left) — version number and the safety notice again.
 
 **Safety:** only use it while the car is safely **parked** — never while
