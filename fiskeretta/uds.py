@@ -865,6 +865,73 @@ async def functional_probe(session: ElmSession, log: Optional[Log] = None,
     return out
 
 
+# --- Generic OBD (SAE J1979) presence probe --------------------------------
+
+# (request, mode, human label). Mode 01 = live data, 09 = vehicle info, 03 =
+# stored emissions DTCs — the legislated modes a BEV is not required to expose.
+_OBD_PROBES = [
+    ("0100", 0x01, "mode 01 PID 00 — supported live-data PIDs"),
+    ("0101", 0x01, "mode 01 PID 01 — monitor status / MIL"),
+    ("0902", 0x09, "mode 09 PID 02 — VIN"),
+    ("03", 0x03, "mode 03 — stored emissions DTCs"),
+]
+
+
+def _obd_answered(reply: str, mode: int) -> bool:
+    """True if `reply` carries a positive OBD response for `mode`: the response
+    service byte (mode | 0x40) appears near the start of a response frame. We drop
+    3-hex CAN IDs and 'N:' frame markers, then look only at the first few bytes of
+    each line, so a matching value deep in the data payload (or a CAN ID) can't be
+    misread as the service byte."""
+    pos = f"{(mode | 0x40):02X}"
+    for line in reply.upper().replace("\r", "\n").split("\n"):
+        frame_bytes = []
+        for tok in line.split():
+            if tok.endswith(":") or re.fullmatch(r"[0-9A-F]{3}", tok):
+                continue  # frame-index marker ("0:") or a CAN ID / length header
+            if re.fullmatch(r"[0-9A-F]{2}", tok):
+                frame_bytes.append(tok)
+        if pos in frame_bytes[:3]:  # service byte sits in the first 1-3 bytes
+            return True
+    return False
+
+
+async def probe_generic_obd(session: ElmSession, log: Optional[Log] = None) -> dict:
+    """Ask the legislated OBD-II functional address 0x7DF for standard emissions
+    data, to confirm whether the Ocean exposes any generic OBD or is UDS-only.
+    Returns {"generic_obd": bool, "probes": [{request, label, answered, reply}]}.
+    """
+    if log:
+        log("Generic-OBD probe on 0x7DF (SAE J1979 modes 01 / 09 / 03)…")
+    results = []
+    try:
+        # Same broadcast setup as the functional ECU probe: headers on, Tx 0x7DF,
+        # filter open to the whole 0x7xx range (also blocks ambient 0x0E9).
+        for cmd in ("ATCAF1", "ATH1", "ATSH7DF", "ATCM700", "ATCF700"):
+            await session.send(cmd)
+        for req, mode, label in _OBD_PROBES:
+            try:
+                reply = await session.send(req, timeout=6.0)
+            except asyncio.TimeoutError:
+                reply = "(timeout)"
+            answered = _obd_answered(reply, mode)
+            if log:
+                log(f"  {req:5s} -> {'answered' if answered else 'no answer'}: {reply.strip()!r}")
+            results.append({"request": req, "label": label,
+                            "answered": answered, "reply": reply.strip()})
+    finally:
+        for cmd in ("ATH0", "ATCRA"):  # restore headers off + default filter
+            try:
+                await session.send(cmd)
+            except asyncio.TimeoutError:
+                pass
+    generic = any(r["answered"] for r in results)
+    if log:
+        log("Generic OBD present — the car answered a legislated mode."
+            if generic else "No generic OBD — the Ocean is UDS-only (as expected).")
+    return {"generic_obd": generic, "probes": results}
+
+
 # --- Deep identification (fingerprint & compare ECUs) ----------------------
 
 # ISO 14229 identification DIDs (0xF1xx) worth fingerprinting an ECU by. The

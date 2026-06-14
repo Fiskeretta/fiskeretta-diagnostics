@@ -213,6 +213,7 @@ let liveResult=null, view=null, viewingSaved=false, viewingSavedId=null, savedSc
 let cur="active", sortKey="code", sortDir=1, logBuf=[], lastDiscovery=[], lastMonitor=[];
 let showComm=false;
 let lastHistory=[], histSel=null, diffCache={};
+let lastGenericObd=null;
 
 const NAV=[["active","Active faults"],["historical","Historical"],["healthy","Healthy"],["unreachable","Unreachable"],["history","History"],["log","Activity log"],["tools","Tools"]];
 
@@ -244,6 +245,7 @@ ws.onmessage=(e)=>{
   else if(m.type==="history"){ lastHistory=m.items||[]; if(cur==="history") renderPanel(); }
   else if(m.type==="scan_diff"){ diffCache[m.scan_id]=m.diff; if(cur==="history") renderPanel(); }
   else if(m.type==="code_history"){ onCodeHistory(m); }
+  else if(m.type==="generic_obd"){ lastGenericObd=m; if(cur==="tools") renderPanel(); }
 };
 
 function onConnection(m){
@@ -601,8 +603,19 @@ function panelTools(){
   let h=`<div class="phead"><span class="ptitle">Tools</span><span class="psub">service actions</span></div>`;
   h+=clearCard();
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for extra modules</div><div class="td">A normal scan reads the modules the app already knows about. This sends one quick broadcast to see whether your car has any control units beyond that set — and if it turns up something unknown, it's added to your scan set and you're offered to send it to the developer so it can be identified and added for everyone. Safe; takes a few seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="checkModules()" data-tip="One broadcast that lists every module and flags anything not in the app's database">Check now</button></div></div></div>`;
+  h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for generic OBD</div><div class="td">The Ocean speaks manufacturer UDS, not the legislated emissions OBD-II that off-the-shelf scanners rely on — which is why a generic scanner shows almost nothing. This sends the standard OBD-II requests (modes 01 / 09 / 03) to 0x7DF to confirm whether the car answers any of them. Safe; a couple of seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="startGenericObd()" data-tip="Send legislated OBD-II requests on 0x7DF to see if the car answers">Run probe</button></div>${genericObdResult()}</div></div>`;
   return h;
 }
+function genericObdResult(){
+  const g=lastGenericObd; if(!g) return "";
+  const verdict=g.generic_obd
+    ? `<span style="color:var(--amber)">Generic OBD present — the car answered a legislated mode.</span>`
+    : `<span style="color:var(--accent)">No generic OBD — confirmed UDS-only.</span>`;
+  const rows=(g.probes||[]).map(p=>`<div style="display:flex;gap:8px;font-size:12px;padding:2px 0;align-items:center"><span style="color:${p.answered?'var(--amber)':'var(--faint)'};width:14px">${p.answered?'●':'○'}</span><span style="flex:1">${esc(p.label)}</span><span style="color:var(--faint)">${p.answered?'answered':'no answer'}</span></div>`).join("");
+  return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft)"><div style="font-size:12.5px;margin-bottom:6px">${verdict}</div>${rows}</div>`;
+}
+function startGenericObd(){ if(connected&&!busy) sendMsg({command:"generic_obd"}); }
+window.startGenericObd=startGenericObd;
 function gate(){ return (!connected||busy)?"disabled":""; }
 function startDiscover(full){ if(connected&&!busy) sendMsg({command:"discover",full_sweep:!!full}); }
 function startMonitor(){ if(connected&&!busy) sendMsg({command:"monitor",seconds:10}); }

@@ -166,6 +166,7 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
         "discover": (lambda: run_discover(ws, log, full_sweep=bool(payload.get("full_sweep"))), "running"),
         "monitor": (lambda: run_monitor(ws, log, seconds=int(payload.get("seconds", 10))), "running"),
         "functional": (lambda: run_functional(log), "running"),
+        "generic_obd": (lambda: run_generic_obd(ws, log), "running"),
         "deep_identify": (lambda: run_deep_identify(log), "running"),
         "no_filter": (lambda: run_no_filter(log), "running"),
         "clear_dtcs": (lambda: run_clear_dtcs(ws, log, payload.get("modules", [])), "running"),
@@ -421,6 +422,13 @@ async def run_functional(log) -> None:
     physical UDS sweep missed. Results stream to the log."""
     known = {t["response"] for t in registry.scan_targets().values() if t.get("response")}
     await _manager.run(lambda s: uds.functional_probe(s, log, known_responses=known))
+
+
+async def run_generic_obd(ws, log) -> None:
+    """Probe for legislated generic OBD (J1979) to confirm the car is UDS-only."""
+    result = await _manager.run(lambda s: uds.probe_generic_obd(s, log))
+    if not ws.closed:
+        await ws.send_json({"type": "generic_obd", **result})
 
 
 async def run_monitor(ws, log, seconds: int = 10) -> None:
