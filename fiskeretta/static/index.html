@@ -248,6 +248,8 @@ ws.onmessage=(e)=>{
   else if(m.type==="code_history"){ onCodeHistory(m); }
   else if(m.type==="generic_obd"){ lastGenericObd=m; if(cur==="tools") renderPanel(); }
   else if(m.type==="did_sweep"){ lastDidSweep=m; if(cur==="tools") renderPanel(); }
+  else if(m.type==="export_result"){ m.ok?infoModal("History exported",`Saved to:<br><span class="mono" style="font-size:12px">${esc(m.path)}</span>`):infoModal("Export failed",esc(m.error||"Could not write the export.")); }
+  else if(m.type==="import_result"){ m.ok?infoModal("History imported",`Added ${m.scans_added||0} scan${m.scans_added===1?"":"s"} and ${m.events_added||0} event${m.events_added===1?"":"s"}. Existing data was kept.`):infoModal("Import failed",esc(m.error||"That doesn't look like a Fiskeretta history export.")); }
 };
 
 function onConnection(m){
@@ -607,8 +609,23 @@ function panelTools(){
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for extra modules</div><div class="td">A normal scan reads the modules the app already knows about. This sends one quick broadcast to see whether your car has any control units beyond that set — and if it turns up something unknown, it's added to your scan set and you're offered to send it to the developer so it can be identified and added for everyone. Safe; takes a few seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="checkModules()" data-tip="One broadcast that lists every module and flags anything not in the app's database">Check now</button></div></div></div>`;
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for generic OBD</div><div class="td">The Ocean speaks manufacturer UDS, not the legislated emissions OBD-II that off-the-shelf scanners rely on — which is why a generic scanner shows almost nothing. This sends the standard OBD-II requests (modes 01 / 09 / 03) to 0x7DF to confirm whether the car answers any of them. Safe; a couple of seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="startGenericObd()" data-tip="Send legislated OBD-II requests on 0x7DF to see if the car answers">Run probe</button></div>${genericObdResult()}</div></div>`;
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Battery / live-data sweep <span style="font-size:11px;color:var(--faint)">(experimental)</span></div><div class="td">Walks UDS 0x22 data identifiers on the BMS (0x7E1) and lists which respond, with their raw bytes — the groundwork for reading HV state of charge, state of health, cell voltages and temperatures. No public DID list exists for the Ocean, so this discovers them; decoded names show for DIDs we've confirmed. One request per DID, so large ranges are slow — start narrow. Read-only and safe.</div><div class="toolbtns" style="margin-top:10px;align-items:center"><span style="font-size:12px;color:var(--faint)">DIDs (hex)</span><input id="didStart" value="${esc(didRange.start)}" style="width:60px" data-tip="Start DID (hex)"><span style="color:var(--faint)">–</span><input id="didEnd" value="${esc(didRange.end)}" style="width:60px" data-tip="End DID (hex)"><button class="btn ghost" ${gate()} onclick="startBmsSweep()" data-tip="Read every DID in the range from the BMS and list the responders">Sweep</button></div>${didSweepResult()}</div></div>`;
+  h+=`<div class="tool"><div style="flex:1"><div class="ti">Data &amp; history</div><div class="td">Your scans and history live in a folder on this computer and survive app updates. Export bundles them into one zip you can back up or move to another machine; import merges a zip back in without overwriting newer data. No connection needed.</div><div class="toolbtns" style="margin-top:10px;gap:8px"><button class="btn ghost" onclick="exportHistory()" data-tip="Save all scans + history to a zip on your Desktop">Export</button><button class="btn ghost" onclick="importHistory()" data-tip="Merge a previously exported history zip">Import</button><button class="btn ghost" onclick="revealFolder()" data-tip="Open the data folder in Finder / Explorer">Reveal data folder</button></div></div></div>`;
   return h;
 }
+function exportHistory(){ sendMsg({command:"export_history"}); }
+function revealFolder(){ sendMsg({command:"reveal_folder"}); }
+function importHistory(){
+  const inp=document.createElement("input");
+  inp.type="file"; inp.accept=".zip,application/zip";
+  inp.onchange=()=>{
+    const f=inp.files&&inp.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=()=>sendMsg({command:"import_history", data:rd.result});
+    rd.readAsDataURL(f);
+  };
+  inp.click();
+}
+window.exportHistory=exportHistory;window.revealFolder=revealFolder;window.importHistory=importHistory;
 function genericObdResult(){
   const g=lastGenericObd; if(!g) return "";
   const verdict=g.generic_obd

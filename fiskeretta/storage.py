@@ -7,11 +7,13 @@ scans" section lists them.
 """
 
 import json
+import shutil
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .paths import CONFIG_DIR, SCANS_DIR
+from .paths import CONFIG_DIR, LEGACY_CONFIG_DIR, SCANS_DIR
 
 EVENTS_FILE = CONFIG_DIR / "events.jsonl"
 
@@ -166,3 +168,102 @@ def load_discovery() -> Optional[dict]:
         return json.loads((CONFIG_DIR / "discovery.json").read_text())
     except (OSError, json.JSONDecodeError):
         return None
+
+
+# --- portability: export / import / native-dir migration -------------------
+
+def _is_safe_member(name: str) -> bool:
+    """Only the data files we write, and nothing that escapes CONFIG_DIR
+    (guards against zip-slip / arbitrary-file extraction)."""
+    if name.endswith("/") or Path(name).is_absolute() or ".." in Path(name).parts:
+        return False
+    return (name == "events.jsonl"
+            or name in ("discovery.json", "bms_dids.json")
+            or (name.startswith("scans/") and name.endswith(".json")))
+
+
+def export_history(dest_path) -> Path:
+    """Zip the whole data dir (scans + events + discovery + sweeps) to dest_path."""
+    dest = Path(dest_path)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+        if CONFIG_DIR.is_dir():
+            for p in sorted(CONFIG_DIR.rglob("*")):
+                if p.is_file():
+                    z.write(p, p.relative_to(CONFIG_DIR).as_posix())
+    return dest
+
+
+def _merge_events(text: str) -> int:
+    """Append events from `text` not already present (deduped by when+type)."""
+    seen = {(e.get("when"), e.get("type")) for e in list_events()}
+    new_lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            ev = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        key = (ev.get("when"), ev.get("type"))
+        if key in seen:
+            continue
+        seen.add(key)
+        new_lines.append(json.dumps(ev))
+    if new_lines:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with EVENTS_FILE.open("a", encoding="utf-8") as f:
+            for ln in new_lines:
+                f.write(ln + "\n")
+    return len(new_lines)
+
+
+def import_history(zip_path) -> dict:
+    """Merge a Fiskeretta history export into CONFIG_DIR, non-destructively: scan
+    files are added if missing (timestamped names are unique), events deduped by
+    (when, type), discovery/sweep filled only if absent. Raises ValueError if the
+    zip isn't a Fiskeretta export."""
+    with zipfile.ZipFile(zip_path) as z:
+        members = [n for n in z.namelist() if _is_safe_member(n)]
+        if not members:
+            raise ValueError("not a Fiskeretta history export")
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        scans_added = events_added = 0
+        for n in members:
+            if n == "events.jsonl":
+                events_added += _merge_events(z.read(n).decode("utf-8", "replace"))
+                continue
+            target = CONFIG_DIR / n
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(z.read(n))
+            if n.startswith("scans/"):
+                scans_added += 1
+        return {"scans_added": scans_added, "events_added": events_added}
+
+
+def migrate_legacy_dir() -> bool:
+    """One-time move of ~/.config/fiskeretta to the native CONFIG_DIR: copy to a
+    temp dir, verify every file arrived, rename into place, then remove the legacy
+    dir. Leaves legacy untouched on any failure. No-op on Linux or once migrated."""
+    if CONFIG_DIR == LEGACY_CONFIG_DIR:
+        return False
+    if CONFIG_DIR.exists() or not LEGACY_CONFIG_DIR.is_dir():
+        return False
+    tmp = CONFIG_DIR.with_name(CONFIG_DIR.name + ".migrating")
+    try:
+        CONFIG_DIR.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.copytree(LEGACY_CONFIG_DIR, tmp)
+        for p in LEGACY_CONFIG_DIR.rglob("*"):  # verify the copy is complete
+            if p.is_file() and not (tmp / p.relative_to(LEGACY_CONFIG_DIR)).is_file():
+                shutil.rmtree(tmp, ignore_errors=True)
+                return False
+        tmp.rename(CONFIG_DIR)  # atomic on the same filesystem
+        shutil.rmtree(LEGACY_CONFIG_DIR, ignore_errors=True)
+        return True
+    except OSError:
+        shutil.rmtree(tmp, ignore_errors=True)
+        return False

@@ -12,8 +12,13 @@ Usage:
 """
 
 import asyncio
+import base64
+import binascii
 import json
+import subprocess
 import sys
+import zipfile
+from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web, WSMsgType
@@ -155,6 +160,15 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
     if command == "code_history":
         await run_code_history(ws, payload.get("module"), payload.get("code"))
         return
+    if command == "reveal_folder":
+        _reveal_folder()
+        return
+    if command == "export_history":
+        await run_export_history(ws)
+        return
+    if command == "import_history":
+        await run_import_history(ws, payload.get("data"))
+        return
 
     # long, cancellable operations — run as a tracked background task
     long_ops = {
@@ -283,6 +297,62 @@ async def run_scan(ws, log) -> None:
 async def send_saved_scans(ws) -> None:
     if not ws.closed:
         await ws.send_json({"type": "saved_scans", "scans": storage.list_scans()})
+
+
+def _reveal_folder() -> None:
+    """Open the data directory in the OS file manager (best effort)."""
+    storage.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    path = str(storage.CONFIG_DIR)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", path])
+        elif sys.platform.startswith("win"):
+            subprocess.Popen(["explorer", path])
+        else:
+            subprocess.Popen(["xdg-open", path])
+    except OSError:
+        pass
+
+
+def _export_dir() -> Path:
+    """A visible place to drop the export: the Desktop if it exists, else home."""
+    desktop = Path.home() / "Desktop"
+    return desktop if desktop.is_dir() else Path.home()
+
+
+async def run_export_history(ws) -> None:
+    """Zip the data dir to the Desktop and tell the UI where it landed."""
+    name = f"Fiskeretta-history-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    try:
+        path = storage.export_history(_export_dir() / name)
+    except OSError as exc:
+        if not ws.closed:
+            await ws.send_json({"type": "export_result", "ok": False, "error": str(exc)})
+        return
+    if not ws.closed:
+        await ws.send_json({"type": "export_result", "ok": True, "path": str(path)})
+
+
+async def run_import_history(ws, data_url) -> None:
+    """Import a history zip the UI read client-side and sent as a data URL."""
+    if not data_url:
+        return
+    b64 = data_url.split(",", 1)[1] if "," in data_url else data_url
+    tmp = storage.CONFIG_DIR / "_import.tmp.zip"
+    try:
+        storage.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp.write_bytes(base64.b64decode(b64))
+        result = storage.import_history(tmp)
+    except (ValueError, OSError, zipfile.BadZipFile, binascii.Error) as exc:
+        if not ws.closed:
+            await ws.send_json({"type": "import_result", "ok": False, "error": str(exc)})
+        return
+    finally:
+        tmp.unlink(missing_ok=True)
+    if not ws.closed:
+        await ws.send_json({"type": "import_result", "ok": True, **result})
+        await send_saved_scans(ws)
+        await send_history(ws)
 
 
 async def send_history(ws) -> None:
@@ -501,6 +571,7 @@ async def run_code_detail(ws, module, code_str) -> None:
 
 
 def build_app() -> web.Application:
+    storage.migrate_legacy_dir()  # one-time move of ~/.config data to the native dir
     app = web.Application()
     app.router.add_get("/", index)
     app.router.add_get("/ws", ws_handler)
