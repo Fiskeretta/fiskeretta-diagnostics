@@ -9,7 +9,17 @@ Manual-documented modules not yet discovered are reported as "not yet reached".
 
 from . import modules as _modules
 from . import storage
+from .knowns import KNOWN_ECUS
 from .uds import MODULES
+
+
+# Addresses positively identified by part number where the DTC-section heuristic
+# mislabels them. The rear inverter files its codes under the front MCU's manual
+# section, so discovery tags 0x7F2 "MCU_F"; its part number (…0041, vs the front's
+# …0040) confirms it's the rear unit.
+ADDRESS_OVERRIDES = {
+    0x7F2: ("mcu_r", "Motor Control Unit, Rear"),
+}
 
 
 def _norm(name: str) -> str:
@@ -18,8 +28,21 @@ def _norm(name: str) -> str:
 
 
 def _discovered_ecus() -> list:
+    """The catalogued 11-bit ECUs: the baked canonical map (knowns.KNOWN_ECUS)
+    as the baseline, plus anything this install has found at runtime
+    (discovery.json) layered on top. So a fresh install scans the full known set
+    out of the box; runtime finds augment/override by request id. 29-bit finds
+    stay out of the scan path (the DTC reader addresses on 11-bit protocol 6)."""
     data = storage.load_discovery()
-    return data.get("ecus", []) if data else []
+    runtime = data.get("ecus", []) if data else []
+    by_req: dict = {}
+    for ecu in list(KNOWN_ECUS) + runtime:  # runtime layered last → wins
+        if ecu.get("addressing") == "29bit":
+            continue
+        req = ecu.get("request_id")
+        if req is not None:
+            by_req[req] = ecu
+    return list(by_req.values())
 
 
 def scan_targets() -> dict:
@@ -36,15 +59,15 @@ def scan_targets() -> dict:
         if req is None or req in seen_requests:
             continue
         seen_requests.add(req)
-        mod_name = ecu.get("module_name")
-        key = _norm(mod_name) if mod_name else f"ecu_{req:03x}"
+        if req in ADDRESS_OVERRIDES:
+            key, lbl = ADDRESS_OVERRIDES[req]
+        else:
+            mod_name = ecu.get("module_name")
+            key = _norm(mod_name) if mod_name else f"ecu_{req:03x}"
+            lbl = _modules.friendly(mod_name) if mod_name else f"ECU 0x{req:03X}"
         if key in targets:  # multiple ECUs share a name (e.g. four radars) — keep both
             key = f"{key}_{req:03x}"
-        targets[key] = {
-            "label": mod_name or f"ECU 0x{req:03X}",
-            "request": req,
-            "response": ecu.get("response_id"),
-        }
+        targets[key] = {"label": lbl, "request": req, "response": ecu.get("response_id")}
     return targets
 
 
@@ -55,6 +78,11 @@ def label(key: str) -> str:
 
 def not_reached() -> list:
     """Manual-documented modules not yet discovered, as (key, label) pairs."""
-    discovered = {_norm(e["module_name"]) for e in _discovered_ecus() if e.get("module_name")}
+    ecus = _discovered_ecus()
+    discovered = {_norm(e["module_name"]) for e in ecus if e.get("module_name")}
     discovered |= set(MODULES.keys())
+    # Apply address overrides so a mislabeled find (e.g. 0x7F2 → mcu_r) clears the
+    # correct entry from the not-yet-reached list.
+    present = {e.get("request_id") for e in ecus}
+    discovered |= {key for req, (key, _lbl) in ADDRESS_OVERRIDES.items() if req in present}
     return [(key, lbl) for key, lbl in _modules.NOT_YET_REACHED if key not in discovered]

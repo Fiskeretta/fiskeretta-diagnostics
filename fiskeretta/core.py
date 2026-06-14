@@ -91,6 +91,11 @@ class ElmSession:
     ELM327 line discipline works over any transport (serial, BLE, etc).
     """
 
+    # Cap the receive buffer so a runaway stream (e.g. monitoring a live bus with
+    # an open filter) can't grow it without bound. Real replies are well under
+    # this; only a firehose ever hits the limit, and we keep the newest tail.
+    _MAX_BUF = 1 << 16  # 64 KiB
+
     def __init__(self, client: BleakClient, write_char: BleakGATTCharacteristic, notify_char: BleakGATTCharacteristic):
         self.client = client
         self.write_char = write_char
@@ -107,8 +112,14 @@ class ElmSession:
 
     def _on_notify(self, _: BleakGATTCharacteristic, data: bytearray) -> None:
         self._buf.extend(data)
-        if PROMPT in self._buf:
+        # Only scan the freshly-arrived tail for the prompt — scanning the whole
+        # (possibly huge) buffer on every packet is O(n²) under a heavy stream and
+        # saturates the event loop, which is what froze the app.
+        if PROMPT in self._buf[-(len(data) + 1):]:
             self._ready.set()
+        # Bound memory: keep only the newest tail if a flood outruns the reader.
+        if len(self._buf) > self._MAX_BUF:
+            del self._buf[:-self._MAX_BUF]
 
     async def send(self, command: str, timeout: float = 5.0) -> str:
         """Send a command, wait for the '>' prompt, return the decoded reply
@@ -126,6 +137,29 @@ class ElmSession:
         if reply.startswith(command):
             reply = reply[len(command):]
         return reply.strip().strip(">").strip()
+
+    async def monitor(self, command: str, seconds: float) -> str:
+        """Run a streaming monitor command (e.g. ATMA) that never returns a '>'
+        prompt on its own. Send it, let notifications accumulate for `seconds`,
+        snapshot what arrived, then send a single byte to stop the monitor and
+        return the adapter to command mode. Returns the captured text."""
+        self._buf.clear()
+        self._ready.clear()
+        write_with_response = "write" in self.write_char.properties
+        await self.client.write_gatt_char(
+            self.write_char, (command + "\r").encode("ascii"), response=write_with_response)
+
+        await asyncio.sleep(seconds)
+        captured = bytes(self._buf).decode("ascii", errors="replace")
+
+        # Any single character stops a running monitor; the byte is otherwise
+        # ignored. Then drain the prompt so the next send() starts clean.
+        try:
+            await self.client.write_gatt_char(self.write_char, b" ", response=write_with_response)
+            await asyncio.wait_for(self._ready.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            pass
+        return captured
 
 
 async def run_handshake(session: ElmSession, log: Log) -> None:

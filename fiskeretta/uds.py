@@ -69,8 +69,18 @@ class UdsError(Exception):
 
 async def configure_addressing(session: ElmSession, request_id: int, response_id: int, log: Optional[Log] = None) -> None:
     """Point the adapter at one ECU: Tx header, Rx filter, and the header it
-    should use when it sends ISO-TP flow-control frames back to the ECU."""
-    for cmd in (f"ATSH{request_id:03X}", f"ATCRA{response_id:03X}", f"ATFCSH{request_id:03X}"):
+    should use when it sends ISO-TP flow-control frames back to the ECU.
+
+    11-bit IDs (<= 0x7FF) use a 3-hex header; a request_id above 0xFFF is taken
+    to be a 29-bit extended ID (e.g. 0x18DA07F1), where the top byte is the CAN
+    priority (set via ATCP) and the low 3 bytes are the header (ATSH/ATFCSH)."""
+    if request_id > 0xFFF:  # 29-bit extended diagnostic addressing
+        priority = (request_id >> 24) & 0xFF
+        cmds = (f"ATCP{priority:02X}", f"ATSH{request_id & 0xFFFFFF:06X}",
+                f"ATCRA{response_id:08X}", f"ATFCSH{request_id & 0xFFFFFF:06X}")
+    else:
+        cmds = (f"ATSH{request_id:03X}", f"ATCRA{response_id:03X}", f"ATFCSH{request_id:03X}")
+    for cmd in cmds:
         reply = await session.send(cmd)
         if log:
             log(f"  {cmd:10s} -> {reply!r}")
@@ -299,14 +309,19 @@ async def read_dtc_snapshot(
     return bytes(payload[6:])
 
 
-async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None, targets: Optional[dict] = None) -> dict:
+async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None, targets: Optional[dict] = None,
+                        progress=None) -> dict:
     """Query each target module for its DTCs. `targets` maps key -> (request_id,
     response_id); defaults to the built-in MODULES. A module that doesn't answer
-    maps to None rather than aborting the whole scan."""
+    maps to None rather than aborting the whole scan. `progress(done, total, name)`
+    is called as each module is queried, for a live scan indicator."""
     if targets is None:
         targets = dict(MODULES)
     report: dict = {}
-    for name, (request_id, response_id) in targets.items():
+    total = len(targets)
+    for idx, (name, (request_id, response_id)) in enumerate(targets.items(), 1):
+        if progress:
+            progress(idx, total, name)
         if log:
             log(f"Querying {name.upper()} (0x{request_id:03X} -> 0x{response_id:03X}) for DTCs...")
         try:
@@ -329,6 +344,58 @@ async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None, targets:
             if log:
                 log(f"  {name.upper()}: couldn't read ({exc})")
     return report
+
+
+async def clear_dtcs(session: ElmSession, request_id: int, response_id: int,
+                     log: Optional[Log] = None, attempts: int = 6) -> tuple:
+    """UDS 0x14 ClearDiagnosticInformation for all DTC groups (0xFFFFFF) on one
+    module. Returns (ok, message); never raises.
+
+    Handles requestCorrectlyReceived-ResponsePending (NRC 0x78) by waiting and
+    re-reading — radars/cameras can take seconds to wipe their fault memory and
+    reply 0x78 first. Retries transient adapter NO DATA, and falls back to an
+    extended diagnostic session once if a real NRC rejects the clear."""
+    await configure_addressing(session, request_id, response_id, log)
+    tried_extended = False
+    saw_pending = False
+    last = "no response"
+    for _ in range(attempts):
+        try:
+            reply = await session.send("14FFFFFF", timeout=12.0)
+        except asyncio.TimeoutError:
+            last = "timeout"
+            continue
+        up = reply.upper()
+        payload = _extract_payload_bytes(reply)
+        if payload and payload[0] == 0x54:
+            return True, "cleared"
+        if len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x14:
+            nrc = payload[2]
+            if nrc == 0x78:                 # responsePending: request accepted, module busy
+                saw_pending = True          # this is an ACK, not a rejection
+                last = "pending"
+                await asyncio.sleep(0.6)
+                continue
+            if not tried_extended:          # real NRC — try an extended session once
+                tried_extended = True
+                try:
+                    await session.send("1003", timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                last = f"NRC 0x{nrc:02X}"
+                continue
+            return False, f"rejected (NRC 0x{nrc:02X})"
+        if any(err in up for err in _ADAPTER_ERRORS):  # NO DATA / ERROR — often transient
+            last = f"adapter: {reply.strip()!r}"
+            await asyncio.sleep(0.3)
+            continue
+        return False, f"unexpected: {payload.hex() if payload else reply.strip()!r}"
+    # Ran out of attempts. A module that only ever replied 0x78 DID accept the
+    # clear and is still finishing (radars/cameras can take several seconds) —
+    # report it as accepted; the caller's re-scan is the final word on success.
+    if saw_pending:
+        return True, "accepted (clearing)"
+    return False, last
 
 
 # Snapshot DID data lengths (bytes after the 2-byte DID tag), decoded by hand
@@ -508,7 +575,8 @@ async def drill_failing_dtcs(session: ElmSession, log: Log) -> None:
 # --- ECU discovery ---------------------------------------------------------
 
 DISCOVERY_START = 0x700
-DISCOVERY_END = 0x7EF
+DISCOVERY_END = 0x7FF  # full 0x7xx diagnostic range — a functional 0x7DF probe
+                       # revealed modules at 0x7F0–0x7F5, above the old 0x7EF ceiling
 
 
 async def _identify_ecu(session: ElmSession, request_id: int, response_id: int) -> Optional[str]:
@@ -543,17 +611,24 @@ async def _identify_by_dtc(session: ElmSession, request_id: int, response_id: in
 
 
 async def discover_ecus(session: ElmSession, log: Optional[Log] = None,
-                        start: int = DISCOVERY_START, end: int = DISCOVERY_END) -> list:
-    """Probe diagnostic request IDs across [start, end] and report which ones an
-    ECU answers (response = request + 8). Separates already-known modules from
-    new finds, and tries to name the new ones via an identification DID."""
-    known = {req: name for name, (req, _resp) in MODULES.items()}
-    found: list = []
-    total = end - start + 1
-    if log:
-        log(f"Probing {total} diagnostic IDs (0x{start:03X}-0x{end:03X}); response = request + 8…")
+                        start: int = DISCOVERY_START, end: int = DISCOVERY_END,
+                        skip_requests: Optional[set] = None) -> list:
+    """Probe 11-bit diagnostic request IDs across [start, end] for new ECUs.
 
-    for offset, req in enumerate(range(start, end + 1)):
+    `skip_requests` lists request IDs already known to respond (the permanent
+    set — built-ins plus prior discovery); they're not re-probed, so a re-run
+    only hunts for genuinely new modules. Returns the new finds (response =
+    request + 8), naming each via an identification DID where possible. The
+    29-bit pass is a separate call (discover_ecus_29bit)."""
+    skip = skip_requests or set()
+    found: list = []
+    probe_ids = [r for r in range(start, end + 1) if r not in skip]
+    total = len(probe_ids)
+    if log:
+        log(f"Probing {total} unprobed 11-bit IDs (0x{start:03X}-0x{end:03X}, "
+            f"skipping {len(skip)} already known); response = request + 8…")
+
+    for offset, req in enumerate(probe_ids):
         resp = req + 8
         await session.send(f"ATSH{req:03X}")
         await session.send(f"ATCRA{resp:03X}")
@@ -566,26 +641,333 @@ async def discover_ecus(session: ElmSession, log: Optional[Log] = None,
         if not _extract_payload_bytes(reply):
             continue
 
-        name = known.get(req)
-        entry = {"request_id": req, "response_id": resp, "module": name,
-                 "module_name": None, "part_number": None, "name_hint": None}
-        if not name:
-            entry["module_name"] = await _identify_by_dtc(session, req, resp)
-            entry["part_number"] = await _identify_ecu(session, req, resp)
-            entry["name_hint"] = entry["module_name"] or entry["part_number"]
+        module_name = await _identify_by_dtc(session, req, resp)
+        part_number = await _identify_ecu(session, req, resp)
+        entry = {"request_id": req, "response_id": resp, "addressing": "11bit",
+                 "module": None, "module_name": module_name, "part_number": part_number,
+                 "name_hint": module_name or part_number}
         found.append(entry)
         if log:
-            if name:
-                who = name.upper()
-            elif entry["module_name"]:
-                who = f"NEW — {entry['module_name']}" + (f" [{entry['part_number']}]" if entry["part_number"] else "")
+            if module_name:
+                who = f"NEW — {module_name}" + (f" [{part_number}]" if part_number else "")
             else:
-                who = f"NEW — {entry['part_number']}" if entry["part_number"] else "NEW (unidentified)"
+                who = f"NEW — {part_number}" if part_number else "NEW (unidentified)"
             log(f"  0x{req:03X} -> 0x{resp:03X}: {who}")
         if log and offset and offset % 64 == 0:
-            log(f"  …{offset}/{total} probed, {len(found)} responding so far")
+            log(f"  …{offset}/{total} probed, {len(found)} new so far")
 
     if log:
-        new = sum(1 for e in found if not e["module"])
-        log(f"Discovery complete — {len(found)} ECUs responding, {new} new beyond the {len(known)} already queried.")
+        log(f"11-bit sweep complete — {len(found)} new ECU(s) beyond the permanent set.")
+    return found
+
+
+# 29-bit extended diagnostic addressing (ISO 15765-4, protocol 7). Brute-forcing
+# 240 physical IDs would be slow, so we instead broadcast functionally on the OBD
+# request ID 18DB33F1 and read back every physical responder (18DAF1xx) with
+# headers on — one or two messages enumerate the whole bus.
+_RESP_29BIT = re.compile(r"18DAF1([0-9A-Fa-f]{2})")
+
+
+def _parse_29bit_responders(reply: str) -> set:
+    """Pull ECU addresses (the xx in 18DAF1xx) out of a headers-on reply."""
+    addrs = set()
+    for line in reply.replace("\r", "\n").split("\n"):
+        compact = re.sub(r"[^0-9A-Fa-f]", "", line)
+        for match in _RESP_29BIT.findall(compact):
+            addrs.add(int(match, 16))
+    return addrs
+
+
+async def discover_ecus_29bit(session: ElmSession, log: Optional[Log] = None) -> list:
+    """Enumerate ECUs on 29-bit extended addressing via a functional broadcast.
+
+    Switches the adapter to protocol 7, sends functional TesterPresent / mode-01
+    on 18DB33F1, and collects every physical responder (18DAF1xx). Restores
+    protocol 6 (11-bit) before returning so the normal scan path is unaffected.
+    Returns entries tagged addressing="29bit" with 29-bit request/response IDs."""
+    if log:
+        log("Probing 29-bit extended addressing (ISO 15765-4, protocol 7)…")
+    found: list = []
+    try:
+        for cmd in ("ATSP7", "ATCAF1", "ATH1", "ATCP18", "ATSHDB33F1", "ATAR"):
+            await session.send(cmd)
+        addrs: set = set()
+        for probe in ("3E00", "0100"):  # TesterPresent (UDS) + mode-01 (OBD)
+            try:
+                reply = await session.send(probe, timeout=6.0)
+            except asyncio.TimeoutError:
+                continue
+            if any(err in reply.upper() for err in _ADAPTER_ERRORS):
+                continue
+            addrs |= _parse_29bit_responders(reply)
+        if log:
+            listed = ", ".join(f"0x{a:02X}" for a in sorted(addrs)) or "none"
+            log(f"  29-bit responders: {listed}")
+
+        for addr in sorted(addrs):
+            req = 0x18DA00F1 | (addr << 8)   # 18 DA <addr> F1  (tester -> ECU)
+            resp = 0x18DAF100 | addr          # 18 DA F1 <addr>  (ECU -> tester)
+            module_name = await _identify_by_dtc(session, req, resp)
+            part_number = await _identify_ecu(session, req, resp)
+            entry = {"request_id": req, "response_id": resp, "addressing": "29bit",
+                     "module": None, "module_name": module_name,
+                     "part_number": part_number,
+                     "name_hint": module_name or part_number}
+            found.append(entry)
+            if log:
+                who = module_name or part_number or "unidentified"
+                log(f"  18DA{addr:02X}F1 -> 18DAF1{addr:02X}: {who}")
+    finally:
+        for cmd in ("ATH0", "ATSP6", "ATCAF1"):
+            try:
+                await session.send(cmd)
+            except asyncio.TimeoutError:
+                pass
+    if log:
+        log(f"29-bit discovery complete — {len(found)} ECU(s) on extended addressing.")
+    return found
+
+
+# --- Passive bus monitor (sniffing) ----------------------------------------
+
+# With CAN auto-formatting off and headers on, ATMA prints one line per frame:
+# "<arb-id> <d0> <d1> …". The arbitration ID is the first token — 3 hex digits
+# for an 11-bit ID, 8 for a 29-bit ID.
+_ARB_ID = re.compile(r"^(?:[0-9A-Fa-f]{3}|[0-9A-Fa-f]{8})$")
+
+
+async def monitor_bus(session: ElmSession, log: Optional[Log] = None, seconds: int = 10) -> list:
+    """Passively sniff the bus (ELM327 ATMA) for `seconds`: tally every
+    arbitration ID heard and how many frames each sent. Unlike discovery (which
+    only finds ECUs that *answer* a diagnostic request), this surfaces any module
+    that *transmits* on the bus the adapter sees — so a module that never replies
+    to a probe still shows up if its normal traffic reaches the OBD port.
+
+    Returns [{id, id_hex, frames, known}] sorted by frame count. `known` flags
+    IDs that match a diagnostic request/response address we already use."""
+    if log:
+        log(f"Listening to the bus for {seconds}s (passive monitor — ATMA)…")
+    # Raw frames (no ISO-TP reassembly) with headers so each line carries its ID,
+    # and a fully open acceptance filter (mask 000) — on this adapter ATMA only
+    # streams once the mask is opened.
+    for cmd in ("ATCAF0", "ATH1", "ATCM000", "ATCF000"):
+        await session.send(cmd)
+    try:
+        raw = await session.monitor("ATMA", seconds)
+    finally:
+        for cmd in ("ATCRA", "ATH0", "ATCAF1"):  # reset filter + restore normal setup
+            try:
+                await session.send(cmd)
+            except asyncio.TimeoutError:
+                pass
+
+    counts: dict = {}
+    for line in raw.replace("\r", "\n").split("\n"):
+        tokens = line.strip().split()
+        if tokens and _ARB_ID.match(tokens[0]):
+            arb = tokens[0].upper()
+            counts[arb] = counts.get(arb, 0) + 1
+
+    known_ids = set()
+    for req, resp in MODULES.values():
+        known_ids.add(f"{req:03X}")
+        known_ids.add(f"{resp:03X}")
+
+    result = [{"id": int(arb, 16), "id_hex": arb, "frames": n, "known": arb in known_ids}
+              for arb, n in counts.items()]
+    result.sort(key=lambda r: -r["frames"])
+
+    if log:
+        total_frames = sum(r["frames"] for r in result)
+        if result:
+            new_ids = sum(1 for r in result if not r["known"])
+            log(f"Heard {len(result)} distinct arbitration ID(s) ({new_ids} not a known "
+                f"diagnostic address) across {total_frames} frames.")
+        else:
+            # Distinguish a truly silent (gated) bus from a parse miss: show what,
+            # if anything, the adapter actually returned.
+            sample = " ".join(raw.split())
+            if sample:
+                log(f"No IDs parsed, but ATMA returned {len(raw)} bytes — format may differ: {sample[:300]}")
+            else:
+                log("Silent — adapter returned 0 bytes. The OBD port isn't forwarding "
+                    "operational traffic (gateway-gated), or the bus is a different speed/protocol.")
+    return result
+
+
+# --- Functional broadcast probe --------------------------------------------
+
+_RESP_11BIT = re.compile(r"^[0-9A-Fa-f]{3}$")
+
+
+async def functional_probe(session: ElmSession, log: Optional[Log] = None,
+                           known_responses: Optional[set] = None) -> list:
+    """11-bit functional broadcast on 0x7DF. The address sweep used UDS
+    TesterPresent (3E00) and matched only response = request + 8; this asks every
+    legislated OBD ECU at once via mode 01/09 *and* TesterPresent, with headers
+    on, and captures each responder's actual arbitration ID. It can surface an
+    ECU (classically 0x7E0, the powertrain/VCU controller) that ignored the UDS
+    sweep but answers OBD modes, or any responder whose ID isn't request + 8.
+
+    Returns [{response_id, request_id, frames, known}]; `known_responses` is the
+    set of response IDs we already use, so genuinely new responders are flagged."""
+    known = known_responses or {resp for _req, resp in MODULES.values()}
+    if log:
+        log("Functional broadcast on 0x7DF (OBD mode 01/09 + UDS TesterPresent), headers on…")
+    responders: dict = {}
+    try:
+        # Open the filter to the whole 0x7xx diagnostic range (not just the default
+        # 7E8–7EF) so every functional responder is captured on its real ID —
+        # including modules outside the legislated OBD block, like the 0x7Fx
+        # cluster. The 0x700 mask also blocks ambient broadcasts (e.g. 0x0E9).
+        for cmd in ("ATCAF1", "ATH1", "ATSH7DF", "ATCM700", "ATCF700"):
+            await session.send(cmd)
+        for probe in ("0100", "0900", "3E00"):
+            try:
+                reply = await session.send(probe, timeout=6.0)
+            except asyncio.TimeoutError:
+                continue
+            for line in reply.replace("\r", "\n").split("\n"):
+                tokens = line.strip().split()
+                if tokens and _RESP_11BIT.match(tokens[0]):
+                    rid = int(tokens[0], 16)
+                    responders[rid] = responders.get(rid, 0) + 1
+    finally:
+        for cmd in ("ATH0", "ATCRA"):  # restore headers off + default filter
+            try:
+                await session.send(cmd)
+            except asyncio.TimeoutError:
+                pass
+
+    out = [{"response_id": rid, "request_id": rid - 8, "frames": n, "known": rid in known}
+           for rid, n in sorted(responders.items())]
+    if log:
+        if not out:
+            log("  No functional responders — no ECU answered the 0x7DF broadcast.")
+        for r in out:
+            tag = "known" if r["known"] else "NEW"
+            log(f"  responder 0x{r['response_id']:03X} (phys req 0x{r['request_id']:03X}): {tag}")
+        new = sum(1 for r in out if not r["known"])
+        log(f"Functional probe done — {len(out)} responder(s), {new} new.")
+    return out
+
+
+# --- Deep identification (fingerprint & compare ECUs) ----------------------
+
+# ISO 14229 identification DIDs (0xF1xx) worth fingerprinting an ECU by. The
+# part number (F187) and system name (F197) are the tell: front/rear inverters
+# are identical hardware, so they share a part-number family.
+_IDENT_DIDS = [
+    (0xF197, "system name/type"),
+    (0xF187, "spare part no"),
+    (0xF191, "hardware no"),
+    (0xF188, "software no"),
+    (0xF18A, "supplier id"),
+    (0xF18C, "serial no"),
+    (0xF190, "VIN"),
+]
+
+
+def _decode_ascii(data: bytes) -> str:
+    return "".join(ch for ch in data.decode("ascii", errors="ignore") if ch.isprintable()).strip()
+
+
+async def deep_identify(session: ElmSession, log: Optional[Log] = None,
+                        targets: Optional[list] = None) -> list:
+    """Dump identification DIDs from a set of ECUs so they can be fingerprinted
+    and compared side by side. `targets` is a list of (label, request_id,
+    response_id); defaults to MCU_F (the known front inverter) plus nothing — the
+    caller normally passes MCU_F as a reference alongside the unidentified
+    responders, to test whether one of the unknowns is the rear inverter or VCU
+    (same part-number family as MCU_F).
+
+    Returns [{label, request_id, response_id, dids:{DID:{ascii,hex}}}]."""
+    if targets is None:
+        targets = [("MCU_F (reference)", *MODULES["mcu_f"])]
+    results = []
+    for label, req, resp in targets:
+        if log:
+            log(f"— {label}  (0x{req:03X} -> 0x{resp:03X})")
+        dids: dict = {}
+        for did, name in _IDENT_DIDS:
+            try:
+                data = bytes(await read_data_by_identifier(session, req, resp, did))
+            except (UdsError, asyncio.TimeoutError):
+                continue
+            text = _decode_ascii(data)
+            dids[f"{did:04X}"] = {"ascii": text, "hex": data.hex()}
+            if log:
+                log(f"    {did:04X} {name:16s}: {text or data.hex()}")
+        if not dids and log:
+            log("    (no identification DIDs answered)")
+        results.append({"label": label, "request_id": req, "response_id": resp, "dids": dids})
+    return results
+
+
+# --- No-filter sweep (catch off-pattern responders) ------------------------
+
+async def no_filter_sweep(session: ElmSession, log: Optional[Log] = None,
+                          start: int = DISCOVERY_START, end: int = DISCOVERY_END,
+                          skip_requests: Optional[set] = None) -> list:
+    """Re-probe 11-bit request IDs accepting any response in the diagnostic range
+    (0x7xx), headers on, so a module replying on an ID *other than* request+8 is
+    still captured — the normal sweep's exact ATCRA filter would silently drop it.
+
+    The hardware mask is set to 0x700/0x700, not fully open: that admits every
+    0x7xx diagnostic reply but blocks ambient broadcast traffic (e.g. the gateway's
+    0x0E9 heartbeat in Drive). A fully open filter turns each probe into an
+    unstoppable stream of that broadcast, which starves the event loop and hangs
+    the app — so we filter it out at the adapter. Raw framing (CAF off) so each
+    responder's arbitration ID is visible.
+
+    Returns [{request_id, response_id, off_pattern, frame}]."""
+    skip = skip_requests or set()
+    probe_ids = [r for r in range(start, end + 1) if r not in skip]
+    found: list = []
+    if log:
+        log(f"No-filter sweep — re-probing {len(probe_ids)} IDs, accepting any 0x7xx "
+            f"responder (headers on). Catches replies that aren't request+8…")
+    seen: set = set()
+    try:
+        # ATCM700/ATCF700: pass IDs where (id & 0x700) == 0x700, i.e. 0x700–0x7FF
+        # only — diagnostic replies get through, ambient broadcasts are dropped.
+        for cmd in ("ATCAF0", "ATH1", "ATCM700", "ATCF700"):
+            await session.send(cmd)
+        for offset, req in enumerate(probe_ids):
+            await session.send(f"ATSH{req:03X}")
+            try:
+                reply = await session.send("023E00", timeout=1.5)  # raw single-frame TesterPresent
+            except asyncio.TimeoutError:
+                continue
+            if any(err in reply.upper() for err in _ADAPTER_ERRORS):
+                continue
+            for line in reply.replace("\r", "\n").split("\n"):
+                tokens = line.strip().split()
+                if not tokens or not _RESP_11BIT.match(tokens[0]):
+                    continue
+                rid = int(tokens[0], 16)
+                # Diagnostic responses live in 0x7xx; anything lower (e.g. 0x0E9)
+                # is ambient broadcast leaking through the open filter — ignore it.
+                if rid < 0x700:
+                    continue
+                if (req, rid) in seen:
+                    continue
+                seen.add((req, rid))
+                entry = {"request_id": req, "response_id": rid,
+                         "off_pattern": rid != req + 8, "frame": " ".join(tokens)}
+                found.append(entry)
+                if log:
+                    flag = "   ← NOT +8!" if entry["off_pattern"] else ""
+                    log(f"  0x{req:03X} → responder 0x{rid:03X}{flag}")
+            if log and offset and offset % 64 == 0:
+                log(f"  …{offset}/{len(probe_ids)} probed, {len(found)} responder(s) so far")
+    finally:
+        for cmd in ("ATCAF1", "ATH0", "ATCRA"):  # restore normal framing/filter
+            try:
+                await session.send(cmd)
+            except asyncio.TimeoutError:
+                pass
+    if log:
+        off = sum(1 for f in found if f["off_pattern"])
+        log(f"No-filter sweep done — {len(found)} responder(s), {off} on a non-+8 ID.")
     return found

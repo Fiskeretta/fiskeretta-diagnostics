@@ -20,377 +20,649 @@
   }
   *{box-sizing:border-box;margin:0}
   html{-webkit-font-smoothing:antialiased}
-  body{background:var(--bg);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-size:15px;line-height:1.5;
-    -webkit-user-select:text;user-select:text}
-  .status,.btn,.linkbtn,.tier .name,.caret{-webkit-user-select:none;user-select:none}
-  .copybtn{font-family:inherit;background:var(--surface-2);border:1px solid var(--line);color:var(--dim);
-    font-size:11px;font-weight:600;border-radius:6px;padding:3px 9px;cursor:pointer;-webkit-user-select:none;user-select:none}
-  .copybtn:hover{color:var(--text)}
-  .loghead .sp{flex:1}
-  .tnum{font-variant-numeric:tabular-nums}
+  body{background:var(--bg);color:var(--text);font-family:"Hanken Grotesk",sans-serif;font-size:15px;line-height:1.5;height:100vh;overflow:hidden;-webkit-user-select:text;user-select:text}
   .mono{font-family:"Martian Mono",monospace;font-variant-ligatures:none}
-  .wrap{max-width:780px;margin:0 auto;padding:20px 18px 64px}
+  .tnum{font-variant-numeric:tabular-nums}
+  button{font-family:inherit}
 
-  .status{display:flex;align-items:center;gap:10px;padding:var(--space-md) var(--space-lg);
-    background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--r)}
+  .app{height:100vh;display:flex;flex-direction:column;overflow:hidden}
+
+  /* ---- top bar ---- */
+  .top{display:flex;align-items:center;gap:var(--space-xl);padding:0 var(--space-xl);height:62px;border-bottom:1px solid var(--line-soft);background:var(--surface);flex:none}
+  .conn{display:flex;align-items:center;gap:var(--space-sm);min-width:170px}
   .pulse{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
-  .pulse.on{background:var(--accent);box-shadow:0 0 0 0 var(--accent);animation:pulse 2.6s ease-out infinite}
-  .pulse.busy{background:var(--amber)}
-  @keyframes pulse{0%{box-shadow:0 0 0 0 oklch(0.74 0.12 168/.5)}70%{box-shadow:0 0 0 7px oklch(0.74 0.12 168/0)}100%{box-shadow:0 0 0 0 oklch(0.74 0.12 168/0)}}
-  .status .dev{font-weight:600;letter-spacing:-0.01em}
-  .status .st{color:var(--dim);font-size:13px}
-  .status .sp{flex:1}
-  .linkbtn{font-family:inherit;background:none;border:none;color:var(--accent);font-size:13px;font-weight:600;cursor:pointer;padding:0}
+  .pulse.on{background:var(--accent)} .pulse.busy{background:var(--amber)}
+  .pulse.work{animation:dotpulse 1.1s ease-in-out infinite}
+  @keyframes dotpulse{0%,100%{opacity:1}50%{opacity:.2}}
+  .conn .dev{font-weight:600;font-size:13.5px;letter-spacing:-0.01em}
+  .conn .st{font-size:11.5px;color:var(--faint)}
+  .veh{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .veh .vin{font-size:13.5px;letter-spacing:0.05em}
+  .veh .model{font-size:11.5px;color:var(--dim)}
+  .topsp{flex:1}
+  .scanind{display:none;align-items:center;gap:8px;color:var(--amber);font-size:12.5px;font-weight:600}
+  .scanind.show{display:flex}
+  .spin{width:13px;height:13px;border:2px solid var(--amber-soft);border-top-color:var(--amber);border-radius:50%;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .scandrop{position:relative}
+  .scantrig{font-family:inherit;font-size:12.5px;background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 24px 6px 10px;cursor:pointer;max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative}
+  .scantrig::after{content:"\25BE";position:absolute;right:8px;top:6px;color:var(--faint);font-size:10px}
+  .scanmenu{position:absolute;right:0;top:calc(100% + 5px);min-width:264px;background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r-sm);padding:5px;z-index:60;box-shadow:0 8px 24px oklch(0 0 0/.45);max-height:62vh;overflow-y:auto}
+  .scanmenu[hidden]{display:none}
+  .smi{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:12.5px;color:var(--text)}
+  .smi:hover{background:var(--surface)}
+  .smi .smtxt{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .smi .smdel{color:var(--faint);font-size:12px;padding:2px 6px;border-radius:4px;flex:none}
+  .smi .smdel:hover{background:var(--red-soft);color:oklch(0.85 0.09 28)}
+  .smi.live{color:var(--accent);font-weight:600}
+  .smi.clearall{color:oklch(0.82 0.10 28);border-top:1px solid var(--line);margin-top:4px;padding-top:9px;border-radius:0;justify-content:center}
+  .smdiv{height:1px;background:var(--line-soft);margin:4px 2px}
+  .cov{position:fixed;inset:0;background:oklch(0 0 0/.55);display:flex;align-items:center;justify-content:center;z-index:200}
+  .cbox{background:var(--surface-2);border:1px solid var(--line);border-radius:var(--r);padding:var(--space-xl);max-width:360px;width:90%}
+  .cmsg{font-size:14px;margin-bottom:var(--space-lg);line-height:1.5}
+  .cbtns{display:flex;gap:var(--space-sm);justify-content:flex-end}
+  .cbtns .btn{width:auto}
+  .btn.danger{background:var(--red);color:oklch(0.18 0.03 28)}
+  .btn.danger:hover{background:oklch(0.71 0.15 28)}
+  .chips{display:flex;gap:7px}
+  .chip{font-size:12.5px;font-weight:600;border-radius:var(--r-sm);padding:5px 10px;white-space:nowrap}
+  .chip.red{background:var(--red-soft);color:oklch(0.85 0.09 28)} .chip.amber{background:var(--amber-soft);color:oklch(0.86 0.08 78)} .chip.gray{background:var(--surface-2);color:var(--dim)}
+  .linkbtn{background:none;border:none;color:var(--accent);font-size:12.5px;font-weight:600;cursor:pointer;padding:0}
+  .scanbar{height:2px;background:transparent;flex:none;overflow:hidden}
+  .scanbar.show{background:var(--amber-soft)}
+  .scanbar.show::after{content:"";display:block;height:100%;width:35%;background:var(--amber);animation:slide 1.1s ease-in-out infinite}
+  @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
 
-  .vehicle{padding:var(--space-xl) 2px var(--space-lg)}
-  .vehicle .vin{font-size:25px;letter-spacing:0.06em;font-weight:500}
-  .vehicle .model{color:var(--dim);margin-top:6px;font-size:14px;font-weight:500}
-  .summary{display:flex;align-items:baseline;gap:var(--space-md);flex-wrap:wrap;margin-top:var(--space-lg)}
-  .summary .big{font-size:34px;font-weight:800;letter-spacing:-0.02em;line-height:1}
-  .summary .big.has{color:var(--red)}
-  .summary .lead{font-size:14px;color:var(--dim)}
-  .summary .meta{margin-left:auto;text-align:right;color:var(--faint);font-size:12.5px;line-height:1.6}
-  .summary .meta b{color:var(--text);font-weight:600}
-  .placeholder{color:var(--faint);font-size:14px;padding:var(--space-md) 2px}
-
-  .tier{display:flex;align-items:center;gap:var(--space-md);margin:var(--space-2xl) 2px var(--space-md)}
-  .tier .name{font-size:11px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--faint)}
-  .tier .rule{flex:1;height:1px;background:var(--line-soft)}
-  .tier .count{font-size:11px;color:var(--faint);font-weight:600}
-
-  .mod{background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--r);margin-bottom:var(--space-sm);overflow:hidden;transition:border-color .18s ease}
-  .mod:hover{border-color:var(--line)}
-  .mod.flagged{background:linear-gradient(180deg,oklch(0.215 0.02 28),var(--surface) 64px)}
-  .mhead{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-md) var(--space-lg);cursor:pointer;user-select:none}
-  .mod.empty .mhead{cursor:default}
-  .dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--faint)}
-  .dot.red{background:var(--red)} .dot.amber{background:var(--amber)} .dot.green{background:var(--accent)}
-  .mid{display:flex;flex-direction:column;gap:1px;min-width:0}
-  .mname{font-weight:700;letter-spacing:0.02em;font-size:14.5px}
-  .mfull{color:var(--dim);font-size:12.5px;font-weight:500}
-  .msp{flex:1}
-  .pill{font-size:11.5px;font-weight:700;border-radius:99px;padding:3px 10px;white-space:nowrap}
-  .pill.red{background:var(--red-soft);color:oklch(0.85 0.09 28)}
-  .pill.amber{background:var(--amber-soft);color:oklch(0.86 0.08 78)}
-  .pill.green{background:var(--accent-soft);color:oklch(0.86 0.09 168)}
-  .pill.gray{background:var(--surface-2);color:var(--faint)}
-  .caret{color:var(--faint);transition:transform .22s cubic-bezier(.22,1,.36,1);font-size:11px}
-  .mod.open .caret.mcaret{transform:rotate(90deg)}
-  .mbody{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.22,1,.36,1)}
-  .mod.open .mbody{grid-template-rows:1fr}
-  .mbody>.inner{overflow:hidden;border-top:1px solid var(--line-soft)}
-
-  .code{display:flex;align-items:flex-start;gap:var(--space-md);padding:var(--space-md) var(--space-lg);border-bottom:1px solid var(--line-soft);cursor:pointer}
-  .code:last-child{border-bottom:none}
-  .cdot{width:6px;height:6px;border-radius:50%;margin-top:7px;flex:none}
-  .cdot.red{background:var(--red)} .cdot.amber{background:var(--amber)}
-  .cmid{flex:1;min-width:0}
-  .cline{display:flex;align-items:center;gap:var(--space-sm)}
-  .ccode{font-size:12.5px;font-weight:600;letter-spacing:0.02em}
-  .cflag{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em}
-  .cflag.red{color:var(--red)} .cflag.amber{color:var(--amber)}
-  .cdesc{color:var(--dim);font-size:13.5px;margin-top:3px;line-height:1.45}
-  .code.open .ccaret{transform:rotate(90deg)}
-  .drill{display:grid;grid-template-rows:0fr;transition:grid-template-rows .26s cubic-bezier(.22,1,.36,1)}
-  .code.open .drill{grid-template-rows:1fr}
-  .drill>.di{overflow:hidden}
-  .dpanel{margin-top:var(--space-md);padding:var(--space-lg);background:var(--bg);border:1px solid var(--line-soft);border-radius:var(--r-sm)}
-  .facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:var(--space-md) var(--space-xl)}
-  .fact .k{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--faint);font-weight:700}
-  .fact .v{margin-top:2px;font-size:13.5px}
-  .dsec{margin-top:var(--space-lg)}
-  .dsec h4{font-size:10.5px;text-transform:uppercase;letter-spacing:0.1em;color:var(--accent);font-weight:700;margin-bottom:6px}
-  .dsec p{color:oklch(0.86 0.01 195);font-size:14px;white-space:pre-line}
-  .src{margin-top:var(--space-lg);padding-top:var(--space-md);border-top:1px solid var(--line-soft);font-size:11.5px;color:var(--faint)}
-  .mod.slim .mhead{padding-top:var(--space-sm);padding-bottom:var(--space-sm)}
-  .mod.muted{opacity:.62}
-
-  .unreached{background:var(--surface);border:1px dashed var(--line);border-radius:var(--r);padding:var(--space-lg)}
-  .ureached-top{display:flex;align-items:center;gap:var(--space-md);margin-bottom:var(--space-lg);flex-wrap:wrap}
-  .ureached-top .txt{flex:1;font-size:13px;color:var(--dim);min-width:240px}
-  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:var(--space-sm)}
-  .uchip{padding:var(--space-sm) var(--space-md);background:var(--bg);border:1px solid var(--line-soft);border-radius:var(--r-sm);opacity:.8}
-  .uchip .ua{font-weight:700;font-size:12.5px} .uchip .un{color:var(--faint);font-size:11.5px;margin-top:1px}
-
-  .scan{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-md) var(--space-lg);background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--r-sm);margin-bottom:6px}
-  .scan .when{font-weight:600;font-size:13.5px;min-width:170px}
-  .scan .ssum{color:var(--dim);font-size:13px;flex:1}
-
-  .btn{font-family:inherit;font-size:13.5px;font-weight:600;border-radius:var(--r-sm);padding:9px 15px;border:1px solid transparent;cursor:pointer;letter-spacing:-0.01em;transition:.15s ease}
-  .btn:disabled{opacity:.5;cursor:default}
+  /* ---- shell ---- */
+  .shell{flex:1;display:flex;min-height:0}
+  .side{width:208px;flex:none;border-right:1px solid var(--line-soft);background:var(--surface);display:flex;flex-direction:column;padding:var(--space-md) var(--space-sm)}
+  .nav{display:flex;align-items:center;gap:var(--space-sm);padding:9px 12px;border-radius:var(--r-sm);cursor:pointer;font-size:13.5px;color:var(--dim);border-left:2px solid transparent;user-select:none}
+  .nav:hover{background:var(--surface-2);color:var(--text)}
+  .nav.on{background:var(--surface-2);color:var(--text);border-left-color:var(--accent)}
+  .nav.disabled{opacity:.38;pointer-events:none}
+  .nav .lbl{flex:1}
+  .nav .cnt{font-size:11.5px;color:var(--faint)}
+  .nav.on .cnt{color:var(--dim)}
+  .runwrap{margin-top:auto;padding:var(--space-sm) 4px 4px;display:flex;flex-direction:column;gap:8px}
+  .aihist{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--dim);cursor:pointer;padding:0 4px}
+  .btn{font-family:inherit;font-size:13.5px;font-weight:600;border-radius:var(--r-sm);padding:10px 15px;border:1px solid transparent;cursor:pointer;transition:.15s ease;width:100%}
+  .btn:disabled{opacity:.45;cursor:default}
   .btn.primary{background:var(--accent);color:oklch(0.20 0.04 168)}
   .btn.primary:hover:not(:disabled){background:oklch(0.79 0.12 168)}
-  .btn.ghost{background:transparent;color:var(--text);border-color:var(--line)}
-  .actions{display:flex;gap:var(--space-sm);flex-wrap:wrap;margin-top:var(--space-md)}
+  .btn.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+  .btn.ghost:hover:not(:disabled){background:var(--surface-2)}
 
-  .logbox{background:oklch(0.14 0.01 195);border:1px solid var(--line-soft);border-radius:var(--r-sm);overflow:hidden;margin-top:var(--space-xl)}
-  .loghead{display:flex;align-items:center;gap:var(--space-sm);padding:10px var(--space-lg);cursor:pointer;color:var(--faint);font-size:12px}
-  .logbody{display:none;max-height:240px;overflow-y:auto;padding:0 var(--space-lg) var(--space-md);color:var(--faint);font-family:"Martian Mono",monospace;font-size:11px;line-height:1.5;white-space:pre-wrap}
-  .logbox.open .logbody{display:block}
-  .logbox.open .loghead .caret{transform:rotate(90deg)}
+  .panel{flex:1;overflow-y:auto;padding:var(--space-xl) var(--space-2xl)}
+  .phead{display:flex;align-items:baseline;gap:var(--space-md);margin-bottom:var(--space-lg)}
+  .ptitle{font-size:18px;font-weight:700;letter-spacing:-0.01em}
+  .psub{font-size:13px;color:var(--dim)}
+  .empty{color:var(--faint);font-size:14px;padding:var(--space-xl) 2px}
+
+  .banner{display:flex;align-items:center;gap:var(--space-md);padding:9px var(--space-lg);background:var(--amber-soft);color:oklch(0.88 0.07 78);font-size:12.5px;font-weight:600;flex:none}
+
+  /* ---- fault table ---- */
+  .fhead,.fsum{display:grid;grid-template-columns:16px 96px 1fr 132px 80px;gap:var(--space-md);align-items:center}
+  .fhead{padding:0 var(--space-md) 8px;font-size:10.5px;text-transform:uppercase;letter-spacing:0.09em;color:var(--faint);border-bottom:1px solid var(--line-soft)}
+  .fhead span{cursor:pointer;user-select:none}
+  .fhead span:hover{color:var(--dim)}
+  .fgrp{display:flex;align-items:center;gap:var(--space-sm);padding:15px var(--space-md) 6px}
+  .fgrp .gn{font-size:11px;font-weight:700;letter-spacing:0.04em;color:var(--text)}
+  .fgrp .gf{font-size:11.5px;color:var(--faint)}
+  .frow{border-bottom:1px solid var(--line-soft)}
+  .fsum{padding:9px var(--space-md);cursor:pointer}
+  .fsum:hover{background:var(--surface)}
+  .fcaret{color:var(--faint);font-size:11px;transition:transform .2s;display:inline-block}
+  .frow.open .fcaret{transform:rotate(90deg)}
+  .fcode{font-size:12px;font-weight:600;letter-spacing:0.02em}
+  .fdesc{color:var(--dim);font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fwhen{font-size:11.5px;color:var(--faint)}
+  .pill{font-size:10.5px;font-weight:700;border-radius:99px;padding:3px 9px;white-space:nowrap;text-align:center}
+  .pill.red{background:var(--red-soft);color:oklch(0.85 0.09 28)} .pill.amber{background:var(--amber-soft);color:oklch(0.86 0.08 78)}
+  .pill.green{background:var(--accent-soft);color:oklch(0.86 0.09 168)} .pill.gray{background:var(--surface-2);color:var(--faint)}
+  .drill{display:grid;grid-template-rows:0fr;transition:grid-template-rows .24s cubic-bezier(.22,1,.36,1)}
+  .frow.open .drill{grid-template-rows:1fr}
+  .drill>.di{overflow:hidden}
+  .dpanel{padding:var(--space-md) var(--space-md) var(--space-lg) 44px}
+  .dsec{margin-top:var(--space-md)}
+  .dsec:first-child{margin-top:6px}
+  .dsec h4{font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--accent);font-weight:700;margin-bottom:4px}
+  .dsec p{color:oklch(0.86 0.01 195);font-size:13.5px;white-space:pre-line}
+  .src{margin-top:var(--space-md);font-size:11px;color:var(--faint)}
+
+  /* ---- simple module/chip lists ---- */
+  .lrow{display:flex;align-items:center;gap:var(--space-md);padding:10px var(--space-md);border-bottom:1px solid var(--line-soft)}
+  .lrow .ln{font-size:13.5px;font-weight:600;flex:1}
+  .lrow .lf{font-size:12px;color:var(--faint)}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:var(--space-sm);margin-top:var(--space-md)}
+  .uchip{padding:var(--space-sm) var(--space-md);background:var(--surface);border:1px solid var(--line-soft);border-radius:var(--r-sm)}
+  .uchip .ua{font-weight:700;font-size:12.5px} .uchip .un{color:var(--faint);font-size:11.5px;margin-top:1px}
+  .uchip.hot{border-color:var(--accent)}
+
+  /* ---- tools ---- */
+  .tool{display:flex;align-items:center;gap:var(--space-md);padding:var(--space-lg);border:1px solid var(--line-soft);border-radius:var(--r-sm);margin-bottom:var(--space-md);background:var(--surface)}
+  .tool .ti{font-size:13.5px;font-weight:600}
+  .tool .td{font-size:12px;color:var(--dim);margin-top:2px}
+  .tool .tsp{flex:1}
+  .tag{font-size:10px;color:var(--faint);border:1px solid var(--line);border-radius:99px;padding:3px 9px;text-transform:uppercase;letter-spacing:0.06em}
+  .toolbtns{display:flex;gap:var(--space-sm);flex-wrap:wrap}
+  .toolbtns .btn{width:auto}
+
+  .logview{font-family:"Martian Mono",monospace;font-size:11.5px;line-height:1.6;color:var(--dim);white-space:pre-wrap;background:oklch(0.14 0.01 195);border:1px solid var(--line-soft);border-radius:var(--r-sm);padding:var(--space-md);min-height:60%}
+
+  /* ---- tooltip ---- */
+  #tip{position:fixed;top:-999px;left:-999px;z-index:300;background:var(--surface-2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:11.5px;font-weight:500;line-height:1.4;max-width:260px;box-shadow:0 4px 16px oklch(0 0 0/.45);pointer-events:none;opacity:0;transition:opacity .1s}
+  #tip.show{opacity:1}
+  .subtool{display:flex;align-items:center;gap:var(--space-md);padding:11px 0;border-top:1px solid var(--line-soft)}
+  .subtool .stx{flex:1}
+  .subtool .stn{font-size:12.5px;font-weight:600}
+  .subtool .std{font-size:11.5px;color:var(--faint);margin-top:2px;line-height:1.4}
+  .subtool .btn{width:auto;flex:none;padding:7px 14px;font-size:12.5px}
+  .clrow{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--line-soft);cursor:pointer;font-size:13px}
+  .clrow .cln{flex:1}
+  .clrow .clc{display:flex;gap:5px}
+  .clrow .clc .pill{font-size:10px;padding:2px 7px}
 </style>
 </head>
 <body>
-<div class="wrap">
-
-  <div class="status">
-    <span class="pulse" id="dot"></span>
-    <span class="dev" id="dev">Fiskeretta Diagnostics</span>
-    <span class="st" id="connText">starting…</span>
-    <span class="sp"></span>
-    <button class="linkbtn" id="reconnect" style="display:none">Reconnect</button>
+<div class="app">
+  <div class="top">
+    <div class="conn"><span class="pulse" id="dot"></span><div><div class="dev" id="dev">Fiskeretta</div><div class="st" id="connText">starting…</div></div></div>
+    <div class="veh" id="veh"><div class="model">connecting to the dongle…</div></div>
+    <div class="topsp"></div>
+    <div class="scanind" id="scanInd"><span class="spin"></span><span id="scanIndText">Scanning…</span></div>
+    <button class="linkbtn" id="reconnect" style="display:none" data-tip="Reconnect to the saved dongle over Bluetooth">Reconnect</button>
+    <button class="linkbtn" id="stopbtn" style="display:none" onclick="stopOp()" data-tip="Stop the connection attempt">Stop</button>
+    <div class="scandrop" id="scanDrop" data-tip="Browse, load, or delete saved scans. Loading one shows that snapshot; the action buttons stay tied to your live car."><button class="scantrig" id="scanTrig">Live (latest)</button><div class="scanmenu" id="scanMenu" hidden></div></div>
+    <div class="chips" id="chips"></div>
   </div>
-
-  <div class="vehicle" id="vehicle">
-    <div class="placeholder" id="vehiclePlaceholder">Connecting to the dongle…</div>
+  <div class="scanbar" id="scanBar"></div>
+  <div class="banner" id="onboardBanner" style="display:none"></div>
+  <div class="shell">
+    <div class="side">
+      <div id="nav"></div>
+      <div class="runwrap"><button class="btn ghost" id="aiBtn" disabled onclick="exportAi()" data-tip="Copies a research prompt with your active faults to paste into any AI">Export for AI</button><label class="aihist" data-tip="Also include historical (previously-seen) faults in the prompt"><input type="checkbox" id="aiHist"> include historical</label><button class="btn primary" id="run" disabled data-tip="Read every module on the car for fault codes">Run scan</button></div>
+      <div class="appfoot" style="margin-top:12px;display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)"><button class="linkbtn" onclick="showAbout()" data-tip="Version, fault-code catalogue status, and the safety notice">About</button><span id="ver"></span></div>
+    </div>
+    <div class="panel" id="panel"></div>
   </div>
-
-  <div id="diagnostics"></div>
-
-  <div id="discoveryResult"></div>
-
-  <div id="savedWrap" style="display:none">
-    <div class="tier"><span class="name">Saved scans</span><span class="rule"></span><span class="count">kept on disk</span></div>
-    <div id="saved"></div>
-  </div>
-
-  <div class="actions">
-    <button class="btn primary" id="rescan" disabled>Re-scan</button>
-    <button class="btn ghost" id="export" disabled>Export</button>
-  </div>
-
-  <div class="logbox" id="logbox">
-    <div class="loghead" id="loghead"><span class="caret">▸</span> Activity log<span class="sp"></span><button class="copybtn" id="logcopy">Copy</button></div>
-    <div class="logbody" id="logbody"></div>
-  </div>
-
 </div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => (s==null?"":String(s)).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
-let connected = false, busy = false, started = false, lastResult = null, lastDiscovery = [];
-function copyText(text){
-  if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
-  const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
-  document.body.appendChild(ta); ta.select();
-  try { document.execCommand("copy"); } catch (e) {}
-  ta.remove(); return Promise.resolve();
-}
-function flashCopied(btn){ const t = btn.textContent; btn.textContent = "Copied"; setTimeout(() => btn.textContent = t, 1200); }
-function copyDiscovery(e){
-  const text = lastDiscovery.map(d => {
-    const id = "0x" + d.request_id.toString(16).toUpperCase();
-    const resp = "0x" + d.response_id.toString(16).toUpperCase();
-    const who = d.module ? d.module.toUpperCase() : (d.name_hint || "unidentified");
-    return `${id}\t${resp}\t${who}${d.module ? "" : " (new)"}`;
-  }).join("\n");
-  copyText(text); if (e && e.target) flashCopied(e.target);
+const fmtWhen = (iso) => { try { return new Date(iso).toLocaleString([], {month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); } catch(e){ return iso; } };
+
+let connected=false, busy=false, connecting=false, started=false, accepted=false;
+let liveResult=null, view=null, viewingSaved=false, viewingSavedId=null, savedScans=[];
+let cur="active", sortKey="code", sortDir=1, logBuf=[], lastDiscovery=[], lastMonitor=[];
+
+const NAV=[["active","Active faults"],["historical","Historical"],["healthy","Healthy"],["unreachable","Unreachable"],["log","Activity log"],["tools","Tools"]];
+
+function copyText(t){
+  if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
+  const ta=document.createElement("textarea");ta.value=t;ta.style.position="fixed";ta.style.opacity="0";
+  document.body.appendChild(ta);ta.select();try{document.execCommand("copy");}catch(e){}ta.remove();return Promise.resolve();
 }
 
-const ws = new WebSocket(`ws://${location.host}/ws`);
-const send = (command) => ws.send(JSON.stringify({command}));
-const sendMsg = (obj) => ws.send(JSON.stringify(obj));
-
-ws.onopen = () => log("Connected to Fiskeretta Diagnostics.");
-ws.onclose = () => { connected = false; setStatus({connected:false, device:null}); $("connText").textContent = "server connection lost"; };
-ws.onmessage = (e) => {
-  const m = JSON.parse(e.data);
-  if (m.type === "log") log(m.message);
-  else if (m.type === "status") { busy = m.value === "running"; renderControls(); paintDot(); if (busy) showScanning(); }
-  else if (m.type === "connection") onConnection(m);
-  else if (m.type === "scan_result") renderScan(m.result);
-  else if (m.type === "saved_scans") renderSaved(m.scans);
-  else if (m.type === "code_detail") onCodeDetail(m);
-  else if (m.type === "discovery") onDiscovery(m);
+const ws=new WebSocket(`ws://${location.host}/ws`);
+const send=(command)=>ws.send(JSON.stringify({command}));
+const sendMsg=(o)=>ws.send(JSON.stringify(o));
+ws.onopen=()=>{ log("Connected to Fiskeretta Diagnostics."); send("saved_scans"); };
+ws.onclose=()=>{connected=false;connecting=false;busy=false;$("connText").textContent="server connection lost";$("reconnect").style.display="inline";$("stopbtn").style.display="none";paintDot();paintRun();};
+ws.onmessage=(e)=>{
+  const m=JSON.parse(e.data);
+  if(m.type==="log") log(m.message);
+  else if(m.type==="app") onApp(m);
+  else if(m.type==="status") onStatus(m.value);
+  else if(m.type==="scan_progress") $("scanIndText").textContent=`Scanning… ${m.done}/${m.total} modules`;
+  else if(m.type==="connection") onConnection(m);
+  else if(m.type==="scan_result") onScan(m.result, !!m.saved);
+  else if(m.type==="saved_scans"){ savedScans=m.scans||[]; if(viewingSaved&&!savedScans.find(x=>x.id===viewingSavedId)) returnToLive(); else renderScanSel(); }
+  else if(m.type==="code_detail") onCodeDetail(m);
+  else if(m.type==="clear_result") onClearResult(m);
+  else if(m.type==="module_check") onModuleCheck(m);
+  else if(m.type==="discovery"){ lastDiscovery=m.ecus||[]; if(cur==="tools") renderPanel(); }
+  else if(m.type==="monitor"){ lastMonitor=m.ids||[]; if(cur==="tools") renderPanel(); }
 };
 
-function startDiscover(){
-  if (!connected || busy) return;
-  $("logbox").classList.add("open");
-  send("discover");
-}
-function onDiscovery(m){
-  lastDiscovery = m.ecus || [];
-  const ecus = lastDiscovery;
-  const news = ecus.filter(e => !e.module).length;
-  let html = `<div class="tier"><span class="name">Discovered ECUs</span><span class="rule"></span><span class="count tnum">${ecus.length} responding · ${news} new</span><button class="copybtn" onclick="copyDiscovery(event)">Copy</button></div>`;
-  html += `<div class="unreached"><div class="grid">`;
-  for (const e of ecus){
-    const id = "0x" + e.request_id.toString(16).toUpperCase();
-    const who = e.module ? e.module.toUpperCase() : (e.name_hint || "unidentified");
-    html += `<div class="uchip"><div class="ua mono">${id}</div><div class="un">${esc(who)}${e.module?"":" · new"}</div></div>`;
-  }
-  html += `</div></div>`;
-  $("discoveryResult").innerHTML = html;
-}
-
 function onConnection(m){
-  connected = m.connected;
-  setStatus(m);
-  if (connected && !started){ started = true; send("saved_scans"); send("scan"); }
-  renderControls();
+  connected=m.connected;
+  if(connected) connecting=false;
+  $("dev").textContent=connected?"Vgate vLinker FD+":"Fiskeretta";
+  if(connected) maybeAutoScan();
+  paintConn(); paintRun();
 }
-function setStatus(m){
-  $("connText").textContent = m.connected ? "connected" : "not connected";
-  $("dev").textContent = m.device || "Fiskeretta Diagnostics";
-  $("reconnect").style.display = m.connected ? "none" : "inline";
-  paintDot();
-}
-function paintDot(){ $("dot").className = "pulse" + (busy ? " busy" : (connected ? " on" : "")); }
-function renderControls(){ $("rescan").disabled = !connected || busy; $("export").disabled = !lastResult; }
-
-function showScanning(){ if (!lastResult) $("vehiclePlaceholder").textContent = "Scanning the car…"; }
-
-const TIERS = {active:"Needs attention", historical:"Historical", clear:"Healthy", unreachable:"Asleep · unreachable"};
-const DOT = {active:"red", historical:"amber", clear:"green", unreachable:""};
-
-function renderScan(r){
-  lastResult = r; busy = false; renderControls(); paintDot();
-  renderVehicle(r.vehicle || {}, r.summary || {});
-  renderDiagnostics(r.modules || []);
+// Kick off the first scan once we're both connected AND the user has accepted
+// the disclaimer — never read the car before they click Continue. Connecting to
+// the dongle is allowed to happen while the disclaimer is still up.
+function maybeAutoScan(){
+  if(!accepted || started || !connected) return;
+  started=true;
+  send("saved_scans");
+  send("scan");
 }
 
-function renderVehicle(v, s){
-  const modelBits = [v.year, v.make, v.model, v.series].filter(Boolean).join(" ");
-  const drive = v.ev_drive ? ` · ${v.ev_drive}` : (v.drive_type ? ` · ${v.drive_type}` : "");
-  const active = s.active || 0;
-  $("vehicle").innerHTML = `
-    <div class="vin mono">${esc(v.vin || "—")}</div>
-    <div class="model">${esc(modelBits || "Vehicle")}${esc(drive)}</div>
-    <div class="summary">
-      <span class="big ${active?"has":""} tnum">${active}</span>
-      <span class="lead">${active === 1 ? "active fault needs attention" : "active faults need attention"}</span>
-      <span class="meta"><b class="tnum">${s.historical||0}</b> historical<br><b class="tnum">${s.modules_reachable||0}</b> of <b class="tnum">${s.modules_total||0}</b> modules reachable</span>
-    </div>`;
+let appVersion="", catalogLoaded=false, catalogCount=0;
+function onApp(m){
+  appVersion=m.version||""; catalogLoaded=!!m.catalog; catalogCount=m.catalog_count||0;
+  const v=$("ver"); if(v) v.textContent=appVersion?("v"+appVersion):"";
 }
 
-function renderDiagnostics(mods){
-  const reached = mods.filter(m => m.status !== "not_reached");
-  const notReached = mods.filter(m => m.status === "not_reached");
-  let html = "", lastTier = null;
-  for (const m of reached){
-    if (m.status !== lastTier){
-      lastTier = m.status;
-      const n = reached.filter(x => x.status === m.status).length;
-      html += `<div class="tier"><span class="name">${esc(TIERS[m.status]||m.status)}</span><span class="rule"></span><span class="count tnum">${n} module${n>1?"s":""}</span></div>`;
-    }
-    html += moduleCard(m);
-  }
-  if (notReached.length){
-    html += `<div class="tier"><span class="name">Not yet reached</span><span class="rule"></span><span class="count tnum">${notReached.length} modules</span></div>`;
-    html += `<div class="unreached"><div class="ureached-top"><span class="txt">These exist in the car but we don't have their addresses yet. Discovery probes the bus to find responding ECUs.</span><button class="btn primary" onclick="startDiscover()">Discover modules</button></div><div class="grid">`;
-    for (const m of notReached) html += `<div class="uchip"><div class="ua">${esc(m.name.toUpperCase())}</div><div class="un">${esc(m.label)}</div></div>`;
-    html += `</div></div>`;
-  }
-  $("diagnostics").innerHTML = html;
-}
+const DISCLAIMER_HTML=`Fiskeretta is a free, community-built diagnostic tool with <b style="color:var(--text)">no warranty of any kind</b>. It reads and clears diagnostic codes on your Fisker Ocean through the OBD2 port.<br><br>You use it <b style="color:var(--text)">entirely at your own risk</b>. The authors accept no responsibility for any damage, data loss, or consequences to your vehicle, adapter, or anything else arising from its use. Clearing codes permanently erases on-car diagnostic history. Only use the app while the vehicle is safely parked — never while driving.`;
 
-function moduleCard(m){
-  const flagged = m.status === "active" ? " flagged" : "";
-  const empty = m.codes.length === 0 ? " empty" : "";
-  const slim = (m.status === "clear" || m.status === "unreachable") ? " slim" : "";
-  const muted = m.status === "unreachable" ? " muted" : "";
-  let badges = "";
-  if (m.counts.active) badges += `<span class="pill red tnum">${m.counts.active} active</span>`;
-  if (m.counts.historical) badges += `<span class="pill amber tnum">${m.counts.historical} historical</span>`;
-  if (m.status === "clear") badges += `<span class="pill green">clear</span>`;
-  if (m.status === "unreachable") badges += `<span class="pill gray">no response</span>`;
-  const caret = m.codes.length ? `<span class="caret mcaret">▸</span>` : "";
-  const codes = m.codes.map(c => codeRow(c, m.name)).join("");
-  const clickable = m.codes.length ? ' onclick="this.parentElement.classList.toggle(\'open\')"' : "";
-  return `<div class="mod${flagged}${empty}${slim}${muted}">
-    <div class="mhead"${clickable}>
-      <span class="dot ${DOT[m.status]||""}"></span>
-      <span class="mid"><span class="mname">${esc(m.name.toUpperCase())}</span><span class="mfull">${esc(m.label)}</span></span>
-      <span class="msp"></span>${badges}${caret}
-    </div>
-    <div class="mbody"><div class="inner">${codes}</div></div>
+function showAbout(){
+  const ov=document.createElement("div"); ov.className="cov"; ov.style.zIndex="600";
+  const cat=catalogLoaded?`${catalogCount.toLocaleString()} fault codes loaded`:"no fault-code catalogue found";
+  ov.innerHTML=`<div class="cbox" style="max-width:470px">
+    <div style="font-weight:700;font-size:16px;margin-bottom:4px">Fiskeretta Diagnostics</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:14px">${appVersion?("Version "+esc(appVersion)+" · "):""}${cat}</div>
+    <div class="cmsg" style="margin-bottom:14px">${DISCLAIMER_HTML}</div>
+    <div style="font-size:11px;color:var(--dim);margin-bottom:16px">Built on protocol knowledge published by the Fisker Owners Association community (puddletools/CAN, puddletools/SaavyScripts).</div>
+    <div class="cbtns"><button class="btn primary" id="aboutClose" style="width:auto">Close</button></div>
   </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#aboutClose").onclick=()=>ov.remove();
+  ov.addEventListener("click",(e)=>{ if(e.target===ov) ov.remove(); });
 }
-
-function statusDecode(b){
-  const parts = [];
-  if (b & 0x01) parts.push("failing now");
-  if (b & 0x08) parts.push("confirmed");
-  return `0x${b.toString(16).toUpperCase().padStart(2,"0")}${parts.length?" · "+parts.join(" + "):""}`;
+window.showAbout=showAbout;
+function onStatus(v){
+  connecting=(v==="connecting");
+  busy=(v==="running");
+  $("scanInd").classList.toggle("show",busy); $("scanBar").classList.toggle("show",busy);
+  if(busy) $("scanIndText").textContent="Scanning…";
+  paintConn(); paintRun();
+  if(cur==="tools") renderPanel();
 }
-
-function codeRow(c, mod){
-  const failing = c.failing_now;
-  const facts = [
-    ["Status", statusDecode(c.status_byte)],
-    ["SAE / page", `${esc(c.j2012||"—")}${c.page?" · p"+c.page:""}`],
-  ];
-  let drill = `<div class="dsec"><h4>When it happened</h4><p class="occ">—</p></div>`;
-  drill += `<div class="facts">${facts.map(([k,v])=>`<div class="fact"><div class="k">${k}</div><div class="v mono">${v}</div></div>`).join("")}</div>`;
-  const meaning = c.subsystem || c.description;
-  if (meaning) drill += `<div class="dsec"><h4>What it means</h4><p>${esc(meaning)}</p></div>`;
-  if (c.failure_event) drill += `<div class="dsec"><h4>Failure condition</h4><p>${esc(c.failure_event)}</p></div>`;
-  if (c.steps) drill += `<div class="dsec"><h4>Diagnostic steps</h4><p>${esc(c.steps)}</p></div>`;
-  drill += `<div class="src">From the Fisker DTC manual</div>`;
-  return `<div class="code" data-module="${esc(mod)}" data-code="${esc(c.code)}" onclick="toggleCode(this)">
-    <span class="cdot ${failing?"red":"amber"}"></span>
-    <div class="cmid">
-      <div class="cline"><span class="ccode mono">${esc(c.code)}</span><span class="cflag ${failing?"red":"amber"}">${failing?"Failing now":"Historical"}</span></div>
-      <div class="cdesc">${esc(c.description || "(no description — code not in the manual)")}</div>
-      <div class="drill"><div class="di"><div class="dpanel">${drill}</div></div></div>
-    </div>
-    <span class="caret ccaret">▸</span>
-  </div>`;
-}
-
-function toggleCode(el){
-  const opening = !el.classList.contains("open");
-  el.classList.toggle("open");
-  if (opening && !el.dataset.fetched){
-    el.dataset.fetched = "1";
-    const occ = el.querySelector(".occ");
-    if (occ) occ.textContent = "Reading fault history…";
-    sendMsg({command:"code_detail", module: el.dataset.module, code: el.dataset.code});
+function paintDot(){ $("dot").className="pulse"+((connecting||busy)?" busy work":(connected?" on":"")); }
+function paintConn(){
+  $("connText").textContent=connecting?"connecting…":(connected?"connected":"not connected");
+  $("reconnect").style.display=(!connected&&!connecting)?"inline":"none";
+  $("stopbtn").style.display=connecting?"inline":"none";
+  paintDot(); paintVeh();
+  // Persistent onboarding strip: whenever we're not connected (and not mid-
+  // connect), tell the user exactly what to do — even if a prior scan is on
+  // screen. The header's Reconnect button sits right above for the action.
+  const ob=$("onboardBanner");
+  if(ob){
+    if(!connected && !connecting){
+      ob.style.display="flex";
+      ob.textContent="Not connected — plug the vLinker into the car's OBD2 port and switch the car to ON (Ready). Fiskeretta finds the dongle and connects automatically.";
+    } else { ob.style.display="none"; }
   }
+  if(!view) renderPanel();  // keep the onboarding/empty-state hint in step with the live state
 }
-
-function onCodeDetail(m){
-  const el = document.querySelector(`.code[data-module="${m.module}"][data-code="${m.code}"]`);
-  if (!el) return;
-  const occ = el.querySelector(".occ");
-  if (!occ) return;
-  if (!m.available){ occ.textContent = "No freeze-frame stored for this code."; return; }
-  const L = m.latest || {};
-  const parts = [];
-  if (L.odometer_mi != null) parts.push(L.odometer_mi.toLocaleString() + " mi");
-  if (L.timestamp) parts.push(L.timestamp);
-  else if (L.timestamp_unset) parts.push("clock not set");
-  let txt = parts.join(" · ") || "recorded (no odometer/time)";
-  const n = (m.records || []).length;
-  if (n > 1) txt += ` — seen ${n}×`;
-  occ.textContent = txt;
+// Header subtitle: an at-a-glance onboarding hint whenever there's no scan on
+// screen yet. A loaded scan replaces this with the vehicle line (renderTop).
+function paintVeh(){
+  if(view) return;
+  const t=connecting?"Connecting to the dongle…"
+    :busy?"Reading the car…"
+    :connected?"Connected — ready"
+    :"Not connected · plug the vLinker into the OBD2 port, switch the car ON";
+  $("veh").innerHTML=`<div class="model">${t}</div>`;
 }
+function paintRun(){
+  const b=$("run");
+  b.textContent=busy?"Cancel":"Run scan";
+  b.classList.toggle("primary",!busy);
+  b.classList.toggle("ghost",busy);
+  b.disabled=busy?false:!connected;
+}
+function stopOp(){ sendMsg({command:"cancel"}); }
+window.stopOp=stopOp;
 
-function renderSaved(scans){
-  if (!scans || !scans.length){ $("savedWrap").style.display = "none"; return; }
-  $("savedWrap").style.display = "block";
-  $("saved").innerHTML = scans.map(s => {
-    const when = s.scanned_at ? new Date(s.scanned_at).toLocaleString() : s.id;
-    return `<div class="scan"><span class="when tnum">${esc(when)}</span><span class="ssum tnum">${s.active||0} active · ${s.historical||0} historical</span></div>`;
+function onScan(r, saved){
+  if(saved){ view=r; viewingSaved=true; }
+  else { liveResult=r; if(!viewingSaved){ view=r; } }
+  busy=false; connecting=false;
+  $("scanInd").classList.remove("show"); $("scanBar").classList.remove("show");
+  paintConn(); paintRun();
+  renderTop(); renderNav(); renderPanel(); renderScanSel();
+}
+function returnToLive(){ viewingSaved=false; viewingSavedId=null; view=liveResult; renderTop(); renderNav(); renderPanel(); renderScanSel(); }
+
+/* ---- top bar ---- */
+function renderTop(){
+  const v=(view&&view.vehicle)||{}, s=(view&&view.summary)||{};
+  const bits=[v.year,v.make,v.model,v.series].filter(Boolean).join(" ");
+  const drive=v.ev_drive?" · "+v.ev_drive:(v.drive_type?" · "+v.drive_type:"");
+  $("veh").innerHTML=`<div class="vin mono">${esc(v.vin||"—")}</div><div class="model">${esc(bits||"Vehicle")}${esc(drive)}</div>`;
+  $("chips").innerHTML=`<span class="chip ${s.active?"red":"gray"} tnum">${s.active||0} active</span><span class="chip ${s.historical?"amber":"gray"} tnum">${s.historical||0} historical</span><span class="chip gray tnum">${s.modules_reachable||0} of ${s.modules_total||0} online</span>`;
+  $("aiBtn").disabled=!view;
+}
+function renderScanSel(){
+  const cur=viewingSaved?savedScans.find(x=>x.id===viewingSavedId):null;
+  $("scanTrig").textContent=cur?fmtWhen(cur.scanned_at):(viewingSaved?"Saved scan":"Live (latest)");
+  let h=`<div class="smi live" onclick="pickLive()">Live (latest)</div>`;
+  if(savedScans.length) h+=`<div class="smdiv"></div>`;
+  h+=savedScans.map(s=>`<div class="smi" onclick="pickScan('${esc(s.id)}')"><span class="smtxt">${esc(fmtWhen(s.scanned_at)||s.id)} · ${s.active||0}a ${s.historical||0}h</span><span class="smdel" data-tip="Delete this scan" onclick="event.stopPropagation();delScan('${esc(s.id)}')">✕</span></div>`).join("");
+  if(savedScans.length) h+=`<div class="smi clearall" onclick="clearAllScans()">Clear all saved scans</div>`;
+  $("scanMenu").innerHTML=h;
+}
+$("scanTrig").addEventListener("click",e=>{ e.stopPropagation(); $("scanMenu").hidden=!$("scanMenu").hidden; });
+$("scanMenu").addEventListener("click",e=>e.stopPropagation());
+document.addEventListener("click",()=>{ $("scanMenu").hidden=true; });
+function pickLive(){ $("scanMenu").hidden=true; returnToLive(); }
+function pickScan(id){ $("scanMenu").hidden=true; viewingSavedId=id; sendMsg({command:"load_scan", scan_id:id}); }
+function delScan(id){ confirmAction("Delete this saved scan? This can't be undone.", ()=>sendMsg({command:"delete_scan", scan_id:id})); }
+function clearAllScans(){ $("scanMenu").hidden=true; confirmAction(`Delete all ${savedScans.length} saved scan${savedScans.length===1?"":"s"}? This can't be undone.`, ()=>sendMsg({command:"clear_scans"})); }
+function confirmAction(msg,onYes){
+  const ov=document.createElement("div"); ov.className="cov";
+  ov.innerHTML=`<div class="cbox"><div class="cmsg"></div><div class="cbtns"><button class="btn ghost" data-no>Cancel</button><button class="btn danger" data-yes>Delete</button></div></div>`;
+  ov.querySelector(".cmsg").textContent=msg;
+  ov.querySelector("[data-no]").onclick=()=>ov.remove();
+  ov.querySelector("[data-yes]").onclick=()=>{ ov.remove(); onYes(); };
+  ov.onclick=(e)=>{ if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
+window.pickLive=pickLive; window.pickScan=pickScan; window.delScan=delScan; window.clearAllScans=clearAllScans; window.confirmAction=confirmAction;
+
+/* ---- sidebar ---- */
+function tierCounts(){
+  const mods=(view&&view.modules)||[], s=(view&&view.summary)||{};
+  return {active:s.active||0, historical:s.historical||0,
+    healthy:mods.filter(m=>m.status==="clear").length,
+    unreachable:mods.filter(m=>m.status==="unreachable").length};
+}
+function renderNav(){
+  const c=tierCounts();
+  $("nav").innerHTML=NAV.map(([k,label])=>{
+    const cnt=k in c?`<span class="cnt tnum">${c[k]}</span>`:"";
+    const dis=(viewingSaved&&(k==="log"||k==="tools"))?" disabled":"";
+    return `<div class="nav${k===cur?" on":""}${dis}" data-k="${k}"${tipFor(k)}><span class="lbl">${label}</span>${cnt}</div>`;
   }).join("");
 }
-
-function log(msg){
-  const b = $("logbody"); const atBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 6;
-  b.textContent += msg + "\n"; if (atBottom) b.scrollTop = b.scrollHeight;
+function tipFor(k){
+  const t={active:"Faults failing right now",historical:"Stored faults not currently failing",healthy:"Modules with no stored faults",unreachable:"Modules that didn't answer, plus ones we haven't reached",log:"Adapter and scan output",tools:"Clear codes, find modules, advanced discovery"}[k];
+  return t?` data-tip="${t}"`:"";
 }
-$("loghead").addEventListener("click", () => $("logbox").classList.toggle("open"));
-$("logcopy").addEventListener("click", (e) => { e.stopPropagation(); copyText($("logbody").textContent); flashCopied($("logcopy")); });
-$("rescan").addEventListener("click", () => { if (connected && !busy) send("scan"); });
-$("reconnect").addEventListener("click", () => send("connect"));
-$("export").addEventListener("click", () => {
-  if (!lastResult) return;
-  const blob = new Blob([JSON.stringify(lastResult, null, 2)], {type:"application/json"});
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob);
-  a.download = `fiskeretta-scan-${(lastResult.vehicle&&lastResult.vehicle.vin)||"scan"}.json`; a.click();
+$("nav").addEventListener("click",e=>{
+  const n=e.target.closest(".nav"); if(!n||n.classList.contains("disabled")) return;
+  cur=n.dataset.k; renderNav(); renderPanel();
 });
+$("run").addEventListener("click",()=>{ if(busy){ stopOp(); return; } if(connected){ if(viewingSaved) returnToLive(); send("scan"); } });
+$("reconnect").addEventListener("click",()=>send("connect"));
+
+/* ---- panels ---- */
+function renderPanel(){
+  const p=$("panel");
+  if(!view&&cur!=="log"&&cur!=="tools"){
+    const onboard="Plug the vLinker into the car's OBD2 port and switch the car to ON (Ready). Fiskeretta finds the dongle and connects on its own — no setup needed.";
+    const msg=busy?"Reading the car… one moment."
+      :connecting?("Connecting to the dongle… "+onboard)
+      :connected?"Connected. Press Run scan to read the car."
+      :(savedScans.length?("Not connected. "+onboard+" Or pick a saved scan from the dropdown above to browse it.")
+        :("Not connected. "+onboard));
+    p.innerHTML=`<div class="empty">${msg}</div>`; return;
+  }
+  const banner=viewingSaved?`<div class="banner">Viewing saved scan · ${esc(fmtWhen(view.scanned_at))} <button class="linkbtn" onclick="returnToLive()">Return to live</button></div>`:"";
+  p.innerHTML=banner+({active:panelFaults("active"),historical:panelFaults("historical"),healthy:panelHealthy(),unreachable:panelUnreachable(),log:panelLog(),tools:panelTools()}[cur]||"");
+}
+const isActive=c=>c.failing_now, isHist=c=>!c.failing_now;
+function groups(pred){
+  return ((view&&view.modules)||[]).map(m=>({name:m.name,label:m.label,codes:(m.codes||[]).filter(pred)})).filter(g=>g.codes.length);
+}
+function sortCodes(list){
+  return [...list].sort((a,b)=>{
+    let A,B;
+    if(sortKey==="desc"){A=a.description||"";B=b.description||"";}
+    else if(sortKey==="when"){A=a._when||"~";B=b._when||"~";}
+    else {A=a.j2012||a.code;B=b.j2012||b.code;}
+    return A<B?-sortDir:A>B?sortDir:0;
+  });
+}
+function caret(k){return sortKey===k?(sortDir>0?" ▲":" ▼"):"";}
+function panelFaults(tone){
+  const gs=groups(tone==="active"?isActive:isHist), s=(view&&view.summary)||{};
+  const n=tone==="active"?(s.active||0):(s.historical||0);
+  const head=`<div class="phead"><span class="ptitle">${tone==="active"?"Active faults":"Historical faults"}</span><span class="psub">${n} ${tone==="active"?"failing now":"stored"} across ${gs.length} module${gs.length===1?"":"s"}</span></div>`;
+  if(!gs.length) return head+`<div class="empty">${tone==="active"?"No active faults — nothing failing right now.":"No historical faults stored."}</div>`;
+  const cols=`<div class="fhead"><span></span><span data-k="code" onclick="setSort('code')">Code${caret("code")}</span><span data-k="desc" onclick="setSort('desc')">Description${caret("desc")}</span><span data-k="when" onclick="setSort('when')">When${caret("when")}</span><span>Status</span></div>`;
+  const body=gs.map(g=>`<div class="fgrp"><span class="gn">${esc(g.name.toUpperCase())}</span><span class="gf">${esc(g.label)} · ${g.codes.length}</span></div>`+
+    sortCodes(g.codes).map(c=>faultRow(c,g,tone)).join("")).join("");
+  return head+cols+body;
+}
+function faultRow(c,g,tone){
+  const fail=c.failing_now;
+  return `<div class="frow" data-module="${esc(g.name)}" data-code="${esc(c.code)}">
+    <div class="fsum" onclick="toggleRow(this.parentElement)">
+      <span class="fcaret">▸</span>
+      <span class="fcode mono">${esc(c.j2012||c.code)}</span>
+      <span class="fdesc">${esc(c.description||"(no description)")}</span>
+      <span class="fwhen mono">—</span>
+      <span class="pill ${fail?"red":"amber"}">${fail?"active":"history"}</span>
+    </div>
+    <div class="drill"><div class="di"><div class="dpanel">${drillHTML(c)}</div></div></div>
+  </div>`;
+}
+function drillHTML(c){
+  let h=`<div class="dsec"><h4>When it happened</h4><p class="occ">—</p></div>`;
+  const meaning=c.subsystem||c.description;
+  if(meaning) h+=`<div class="dsec"><h4>What it means</h4><p>${esc(meaning)}</p></div>`;
+  if(c.failure_event) h+=`<div class="dsec"><h4>Failure condition</h4><p>${esc(c.failure_event)}</p></div>`;
+  if(c.impact) h+=`<div class="dsec"><h4>Impact</h4><p>${esc(c.impact)}</p></div>`;
+  if(c.limp) h+=`<div class="dsec"><h4>When active, the car…</h4><p>${esc(c.limp)}</p></div>`;
+  if(c.steps) h+=`<div class="dsec"><h4>Diagnostic steps</h4><p>${esc(c.steps)}</p></div>`;
+  if(c.repair&&c.repair!==c.steps) h+=`<div class="dsec"><h4>Repair</h4><p>${esc(c.repair)}</p></div>`;
+  if(c.trigger) h+=`<div class="dsec"><h4>Sets / clears when</h4><p style="color:var(--faint);font-size:12px">${esc(c.trigger.replace(/[\x00-\x1f]/g," "))}</p></div>`;
+  h+=`<div class="src">SAE ${esc(c.j2012||"—")}${c.page?" · manual p"+c.page:""} · status 0x${(c.status_byte||0).toString(16).toUpperCase().padStart(2,"0")} · Fisker DTC manual + community list</div>`;
+  return h;
+}
+function toggleRow(el){
+  const opening=!el.classList.contains("open");
+  el.classList.toggle("open");
+  if(opening&&!el.dataset.fetched){
+    el.dataset.fetched="1";
+    const occ=el.querySelector(".occ");
+    if(viewingSaved){ if(occ) occ.textContent="Saved snapshot — connect live to read fault history."; return; }
+    if(occ) occ.textContent="Reading fault history…";
+    sendMsg({command:"code_detail", module:el.dataset.module, code:el.dataset.code});
+  }
+}
+function onCodeDetail(m){
+  const el=document.querySelector(`.frow[data-module="${m.module}"][data-code="${m.code}"]`);
+  if(!el) return;
+  const occ=el.querySelector(".occ");
+  if(!m.available){ if(occ) occ.textContent="No freeze-frame stored for this code."; return; }
+  const L=m.latest||{}, parts=[];
+  if(L.odometer_mi!=null) parts.push(L.odometer_mi.toLocaleString()+" mi");
+  if(L.timestamp) parts.push(L.timestamp); else if(L.timestamp_unset) parts.push("clock not set");
+  let txt=parts.join(" · ")||"recorded (no odometer/time)";
+  const n=(m.records||[]).length; if(n>1) txt+=` — seen ${n}×`;
+  if(occ) occ.textContent=txt;
+  const w=el.querySelector(".fwhen"); if(w&&parts.length) w.textContent=parts.slice(0,2).join(" · ");
+}
+window.setSort=function(k){ if(sortKey===k) sortDir*=-1; else {sortKey=k;sortDir=1;} renderPanel(); };
+window.toggleRow=toggleRow; window.returnToLive=returnToLive;
+
+function panelHealthy(){
+  const gs=((view&&view.modules)||[]).filter(m=>m.status==="clear");
+  const head=`<div class="phead"><span class="ptitle">Healthy</span><span class="psub">${gs.length} module${gs.length===1?"":"s"} reachable with no stored faults</span></div>`;
+  if(!gs.length) return head+`<div class="empty">No healthy modules in this scan.</div>`;
+  return head+gs.map(m=>`<div class="lrow"><span class="ln">${esc(m.label)}</span><span class="lf mono">${esc(m.name.toUpperCase())}</span><span class="pill green">clear</span></div>`).join("");
+}
+function panelUnreachable(){
+  const mods=(view&&view.modules)||[];
+  const unreach=mods.filter(m=>m.status==="unreachable"), nr=mods.filter(m=>m.status==="not_reached");
+  let h=`<div class="phead"><span class="ptitle">Unreachable</span><span class="psub">${unreach.length} didn't answer · ${nr.length} not yet reached</span></div>`;
+  if(unreach.length) h+=unreach.map(m=>`<div class="lrow"><span class="ln">${esc(m.label)}</span><span class="lf mono">${esc(m.name.toUpperCase())}</span><span class="pill gray">no response</span></div>`).join("");
+  if(nr.length){
+    h+=`<div class="fgrp"><span class="gn">NOT YET REACHED</span><span class="gf">documented in the manual, no address found</span></div><div class="grid">`;
+    h+=nr.map(m=>`<div class="uchip"><div class="ua">${esc(m.name.toUpperCase())}</div><div class="un">${esc(m.label)}</div></div>`).join("")+`</div><div class="psub" style="margin-top:14px">Use Tools → Find modules to probe for these.</div>`;
+  }
+  return h;
+}
+function panelLog(){
+  return `<div class="phead"><span class="ptitle">Activity log</span><span class="psub">adapter &amp; scan output</span><span class="topsp"></span><button class="linkbtn" onclick="copyText($('logRaw').textContent)">Copy</button></div><div class="logview" id="logRaw">${esc(logBuf.join("\n"))}</div>`;
+}
+function panelTools(){
+  let h=`<div class="phead"><span class="ptitle">Tools</span><span class="psub">service actions</span></div>`;
+  h+=clearCard();
+  h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for extra modules</div><div class="td">A normal scan reads the modules the app already knows about. This sends one quick broadcast to see whether your car has any control units beyond that set — and if it turns up something unknown, it's added to your scan set and you're offered to send it to the developer so it can be identified and added for everyone. Safe; takes a few seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="checkModules()" data-tip="One broadcast that lists every module and flags anything not in the app's database">Check now</button></div></div></div>`;
+  return h;
+}
+function gate(){ return (!connected||busy)?"disabled":""; }
+function startDiscover(full){ if(connected&&!busy) sendMsg({command:"discover",full_sweep:!!full}); }
+function startMonitor(){ if(connected&&!busy) sendMsg({command:"monitor",seconds:10}); }
+function startFunctional(){ if(connected&&!busy) sendMsg({command:"functional"}); }
+function startDeepIdentify(){ if(connected&&!busy) sendMsg({command:"deep_identify"}); }
+function startNoFilter(){ if(connected&&!busy) sendMsg({command:"no_filter"}); }
+window.startDiscover=startDiscover;window.startMonitor=startMonitor;window.startFunctional=startFunctional;window.startDeepIdentify=startDeepIdentify;window.startNoFilter=startNoFilter;window.copyText=copyText;
+window.$=$;
+
+/* ---- export for AI ---- */
+function buildAiPrompt(includeHist){
+  const v=(view&&view.vehicle)||{};
+  const car=[v.year,"Fisker Ocean",v.series].filter(Boolean).join(" ")||"Fisker Ocean";
+  const drive=v.ev_drive?` (${v.ev_drive})`:(v.drive_type?` (${v.drive_type})`:"");
+  function grp(pred){
+    return ((view&&view.modules)||[]).map(m=>({label:m.label,codes:(m.codes||[]).filter(pred)})).filter(g=>g.codes.length)
+      .map(g=>`${g.label}\n`+g.codes.map(c=>`  • ${c.j2012||c.code} — ${c.description||""}${c.impact?` (${c.impact})`:""}`).join("\n")).join("\n");
+  }
+  let p=`I own a ${car}${drive}. Fisker went bankrupt, so there's no manufacturer support — the owner community is the main source of real fixes. I pulled these diagnostic trouble codes from my car with a free OBD2 tool. For EACH code, I want practical, real-world info from other Fisker owners: the likely cause, how serious it is (is it safe to drive?), and how people have actually fixed it.
+
+MY ACTIVE FAULTS
+${grp(c=>c.failing_now)||"(none)"}
+`;
+  if(includeHist){
+    const h=grp(c=>!c.failing_now);
+    if(h) p+=`\nPREVIOUSLY SEEN (historical — possibly already resolved; use only for pattern / root-cause context, NOT as active problems)\n${h}\n`;
+  }
+  p+=`
+WHAT I WANT BACK
+A short, practical writeup per code: likely cause, severity, and owner-reported fixes — with source links. Favor DIY / independent-tech / community fixes over "see your dealer" (there are no dealers). Call out when several codes likely share one root cause.
+
+WHERE TO LOOK
+1. Fisker Owners Association forum — https://community.fiskeroa.com — the single best source. IMPORTANT: it requires a free login, so a normal web search can't see most of it (setup below).
+2. Public web: r/FiskerOcean (Reddit), the "Fisker Owners" Facebook groups, oceanforums.com, and YouTube owner repair videos.
+
+HOW TO GET INTO THE GATED FORUM (do this first)
+• If you're Claude: ask me to connect the "Claude in Chrome" extension (or enable computer use); I'll open community.fiskeroa.com and log in, then you can search it.
+• If you're ChatGPT or Gemini with browsing / agent mode: tell me how to turn it on, I'll log into the forum in the browser you can see, then search it.
+• If you have no logged-in browser access: use the public sources above and give me ready-made forum search links to check myself.
+
+Start by confirming how you'll access the forum, then go code by code.`;
+  return p;
+}
+function exportAi(){
+  if(!view) return;
+  const hist=$("aiHist")&&$("aiHist").checked;
+  copyText(buildAiPrompt(hist));
+  infoModal("Prompt copied","Paste it into your AI of choice (Claude, ChatGPT, Gemini…).<br><br>For the gated FOA forum, the prompt walks your AI through getting a logged-in browser — just follow its lead. It'll then research each fault and report owner-reported fixes with links.");
+}
+function infoModal(title,html){
+  const ov=document.createElement("div"); ov.className="cov";
+  ov.innerHTML=`<div class="cbox"><div class="ctitle" style="font-weight:700;font-size:15px;margin-bottom:10px"></div><div class="cmsg" style="margin-bottom:18px"></div><div class="cbtns"><button class="btn primary" data-ok>Got it</button></div></div>`;
+  ov.querySelector(".ctitle").textContent=title;
+  ov.querySelector(".cmsg").innerHTML=html;
+  ov.querySelector("[data-ok]").onclick=()=>ov.remove();
+  ov.onclick=(e)=>{ if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
+/* ---- share findings ---- */
+function shareFindings(){
+  const v=(view&&view.vehicle)||{};
+  const car=[v.year,"Fisker Ocean",v.series].filter(Boolean).join(" ")||"Fisker Ocean";
+  const lines=lastDiscovery.map(e=>{const id="0x"+e.request_id.toString(16).toUpperCase();const who=e.label||(e.module||e.name_hint||"unidentified");const pn=e.part_number?` [${e.part_number}]`:"";return `${id} ${who}${pn}${e.addressing==="29bit"?" (29-bit)":""}`;}).join("\n");
+  const body=`Fiskeretta discovery findings\n\nVehicle: ${car}\nModules responding: ${lastDiscovery.length}\n\n${lines}\n\n(Shared from the Fiskeretta app — review before sending.)`;
+  window.location.href=`mailto:enteral-03soluble@icloud.com?subject=${encodeURIComponent("Fiskeretta findings — "+car)}&body=${encodeURIComponent(body)}`;
+}
+window.exportAi=exportAi; window.shareFindings=shareFindings; window.infoModal=infoModal;
+
+/* ---- clear DTCs ---- */
+function clearCard(){
+  const liveOk=connected&&!busy&&!viewingSaved&&!!view;
+  const mods=((view&&view.modules)||[]).filter(m=>(m.counts.active+m.counts.historical)>0);
+  const note=viewingSaved?`<div class="std" style="margin-top:8px">You're viewing a saved scan — switch to Live to clear codes.</div>`:(!connected?`<div class="std" style="margin-top:8px">Connect to the car to clear codes.</div>`:"");
+  const list=mods.length?mods.map(m=>`<label class="clrow"><input type="checkbox" class="clchk" value="${esc(m.name)}" ${liveOk?"":"disabled"}><span class="cln">${esc(m.label)}</span><span class="clc">${m.counts.active?`<span class="pill red">${m.counts.active}a</span>`:""}${m.counts.historical?`<span class="pill amber">${m.counts.historical}h</span>`:""}</span></label>`).join(""):`<div class="td">No stored codes to clear.</div>`;
+  return `<div class="tool" style="flex-direction:column;align-items:stretch"><div class="ti">Clear DTC codes</div><div class="td" style="margin-top:3px">Erases stored fault codes from the modules you pick (UDS service 0x14). Your current scan is already saved to disk, and the car is re-scanned afterward so you can see what truly cleared vs. came right back. Active faults re-set immediately — this fixes nothing, it just clears residual history. <b style="color:var(--text)">Erased on-car history can't be recovered.</b></div>${note}<div style="margin-top:10px">${list}</div>`+
+    (mods.length?`<div class="toolbtns" style="margin-top:12px;align-items:center;gap:10px"><button class="btn ghost" ${liveOk?"":"disabled"} onclick="clearSelected()" data-tip="Erases codes from the checked modules — asks you to confirm first">Clear selected</button><button class="linkbtn" onclick="clrAll(true)">Select all</button><button class="linkbtn" onclick="clrAll(false)">None</button></div>`:"")+
+    `</div>`;
+}
+function clrAll(on){ document.querySelectorAll(".clchk").forEach(c=>{ if(!c.disabled) c.checked=on; }); }
+function clearSelected(){
+  const checked=[...document.querySelectorAll(".clchk:checked")];
+  if(!checked.length) return;
+  const sel=checked.map(c=>c.value);
+  const names=checked.map(c=>c.closest(".clrow").querySelector(".cln").textContent);
+  confirmAction(`Clear stored codes from ${sel.length} module${sel.length>1?"s":""} — ${names.slice(0,3).join(", ")}${sel.length>3?", …":""}? The on-car history will be erased and can't be recovered (your saved scan keeps the record).`, ()=>sendMsg({command:"clear_dtcs", modules:sel}));
+}
+function onClearResult(m){
+  const r=m.results||[], ok=r.filter(x=>x.ok).length;
+  const rows=r.map(x=>`<div style="display:flex;gap:8px;font-size:12.5px;padding:3px 0;align-items:center"><span style="color:${x.ok?'var(--accent)':'var(--red)'};font-weight:700">${x.ok?'✓':'✕'}</span><span style="flex:1">${esc(x.label||x.module)}</span><span style="color:var(--faint);font-size:11.5px">${esc(x.msg||'')}</span></div>`).join("");
+  infoModal(`Cleared ${ok} of ${r.length} module${r.length===1?"":"s"}`, `${rows}<div style="margin-top:10px;color:var(--dim)">Counts are from a fresh re-scan just now. Anything still listed is currently <b style="color:var(--text)">active</b> — it re-sets the instant it's cleared and won't go away until the underlying fault is fixed.</div>`);
+}
+window.clearCard=clearCard; window.clrAll=clrAll; window.clearSelected=clearSelected;
+
+/* ---- check for extra modules ---- */
+function checkModules(){ if(connected&&!busy) sendMsg({command:"check_modules"}); }
+function onModuleCheck(m){
+  const found=m.found||0, news=m.new||[];
+  if(!news.length){
+    infoModal("No extra modules found", `Heard from <b style="color:var(--text)">${found}</b> module${found===1?"":"s"} — all already in the app's database. Nothing new on your car.`);
+  } else {
+    const list=news.map(n=>`0x${n.request_id.toString(16).toUpperCase()}`).join(", ");
+    shareModal(`Found ${news.length} unknown module${news.length>1?"s":""}`, `Heard from <b style="color:var(--text)">${found}</b> modules, including <b style="color:var(--text)">${news.length}</b> the app doesn't recognize:<br><br><span class="mono">${esc(list)}</span><br><br>They've been added to your scan set. Send them to the developer so they can be identified and added for everyone?`, ()=>shareCheckFindings(news));
+  }
+}
+function shareModal(title, html, onShare){
+  const ov=document.createElement("div"); ov.className="cov";
+  ov.innerHTML=`<div class="cbox"><div class="ctitle" style="font-weight:700;font-size:15px;margin-bottom:10px"></div><div class="cmsg" style="margin-bottom:18px"></div><div class="cbtns"><button class="btn ghost" data-no>Not now</button><button class="btn primary" data-yes>Send to developer</button></div></div>`;
+  ov.querySelector(".ctitle").textContent=title;
+  ov.querySelector(".cmsg").innerHTML=html;
+  ov.querySelector("[data-no]").onclick=()=>ov.remove();
+  ov.querySelector("[data-yes]").onclick=()=>{ ov.remove(); onShare(); };
+  ov.onclick=(e)=>{ if(e.target===ov) ov.remove(); };
+  document.body.appendChild(ov);
+}
+function shareCheckFindings(news){
+  const v=(view&&view.vehicle)||{};
+  const car=[v.year,"Fisker Ocean",v.series].filter(Boolean).join(" ")||"Fisker Ocean";
+  const lines=news.map(n=>`0x${n.request_id.toString(16).toUpperCase()} -> 0x${n.response_id.toString(16).toUpperCase()}`).join("\n");
+  const body=`Fiskeretta — modules not in the catalogue\n\nVehicle: ${car}\n\nUnknown module addresses (request -> response):\n${lines}\n\n(Shared from the Fiskeretta app — review before sending.)`;
+  window.location.href=`mailto:enteral-03soluble@icloud.com?subject=${encodeURIComponent("Fiskeretta new modules — "+car)}&body=${encodeURIComponent(body)}`;
+}
+window.checkModules=checkModules;
+
+function log(msg){ logBuf.push(msg); if(logBuf.length>600) logBuf.shift(); if(cur==="log"){ const el=$("logRaw"); if(el){ el.textContent=logBuf.join("\n"); el.scrollTop=el.scrollHeight; } } }
+
+/* ---- viewport-clamped tooltips (no edge clipping) ---- */
+const tip=document.createElement("div"); tip.id="tip"; document.body.appendChild(tip);
+let tipEl=null;
+function placeTip(t){
+  tip.textContent=t.getAttribute("data-tip");
+  const r=t.getBoundingClientRect(), tw=tip.offsetWidth, th=tip.offsetHeight, M=8;
+  let top=r.bottom+6; if(top+th>innerHeight-M) top=r.top-th-6; if(top<M) top=M;
+  let left=Math.max(M, Math.min(r.left+r.width/2-tw/2, innerWidth-tw-M));
+  tip.style.top=top+"px"; tip.style.left=left+"px"; tip.classList.add("show");
+}
+document.addEventListener("mouseover",e=>{
+  const t=e.target.closest&&e.target.closest("[data-tip]");
+  if(!t){ tipEl=null; tip.classList.remove("show"); return; }
+  if(t===tipEl) return; tipEl=t; placeTip(t);
+});
+window.addEventListener("scroll",()=>{ tipEl=null; tip.classList.remove("show"); },true);
+
+/* ---- first-run liability disclaimer ---- */
+(function(){
+  // Fail SAFE: if storage is unreadable (private mode, sandbox), show the
+  // disclaimer rather than silently accepting it.
+  let seen=false;
+  try { seen = localStorage.getItem("fk_disclaimer")==="1"; } catch(e){ seen=false; }
+  if(seen){ accepted=true; maybeAutoScan(); return; }
+  const ov=document.createElement("div"); ov.className="cov"; ov.style.zIndex="500";
+  ov.innerHTML=`<div class="cbox" style="max-width:470px">
+    <div style="font-weight:700;font-size:16px;margin-bottom:12px">Before you start</div>
+    <div class="cmsg" style="margin-bottom:16px">${DISCLAIMER_HTML}</div>
+    <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--dim);margin-bottom:16px;cursor:pointer"><input type="checkbox" id="discAgree"> I understand and accept these terms</label>
+    <div class="cbtns"><button class="btn primary" id="discOk" disabled style="width:auto">Continue</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector("#discAgree").onchange=function(){ ov.querySelector("#discOk").disabled=!this.checked; };
+  ov.querySelector("#discOk").onclick=()=>{ try{ localStorage.setItem("fk_disclaimer","1"); }catch(e){} ov.remove(); accepted=true; maybeAutoScan(); };
+})();
+
+renderNav(); renderPanel();
 </script>
 </body>
 </html>

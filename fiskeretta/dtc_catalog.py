@@ -34,6 +34,8 @@ _CANDIDATES = [
 _catalog: Optional[dict] = None
 _catalog_dir: Optional[Path] = None
 _pages: Optional[dict] = None
+_extended: Optional[dict] = None
+_combined: Optional[dict] = None
 
 
 def _load() -> dict:
@@ -64,11 +66,19 @@ def _load() -> dict:
 
 
 def is_loaded() -> bool:
-    return bool(_load())
+    return bool(_load_combined() or _load())
+
+
+def count() -> int:
+    """How many codes the active catalog can describe — shown in the About box."""
+    return len(_load_combined()) or len(_load())
 
 
 def describe(code: int) -> Optional[str]:
     """Return the human description for a raw 24-bit DTC code, or None."""
+    rec = lookup(code)
+    if rec and rec.get("description"):
+        return rec["description"]
     row = _load().get(code)
     return row.get("description") if row else None
 
@@ -164,11 +174,128 @@ def troubleshooting(code: int) -> Optional[dict]:
     return result
 
 
+# --- extended dataset (second DTC export: impact / limp / repair / trigger) ---
+
+# A second community DTC export ("Fisker Ocean Dtc error list") carries fields the
+# troubleshooting manual lacks — notably Impact (consequence), Limp (what the car
+# does when the fault is active), an ordered Repair list, and the monitor/reset
+# Trigger conditions. Parsed into dtc_extended.json keyed by the same raw 24-bit
+# code, so it merges with the manual catalog at lookup time.
+_EXTENDED_FILENAME = "dtc_extended.json"
+
+
+def _load_extended() -> dict:
+    """Build {numeric_code: {impact, limp, repair, cause, trigger, ...}} from the
+    extended export, if present. Cached. Keyed by raw 24-bit int like the manual."""
+    global _extended
+    if _extended is not None:
+        return _extended
+
+    _load()  # resolve _catalog_dir
+    _extended = {}
+    candidates = [
+        _catalog_dir / _EXTENDED_FILENAME if _catalog_dir else None,
+        _REPO_ROOT.parent / "docs" / "DTC" / _EXTENDED_FILENAME,
+        _REPO_ROOT / "docs" / "DTC" / _EXTENDED_FILENAME,
+        Path.home() / ".config" / "fiskeretta" / _EXTENDED_FILENAME,
+    ]
+    for cand in candidates:
+        if not cand or not Path(cand).is_file():
+            continue
+        try:
+            data = json.loads(Path(cand).read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for key, row in data.items():
+            try:
+                _extended[int(key)] = row
+            except (ValueError, TypeError):
+                continue
+        break
+    return _extended
+
+
+def extended(code: int) -> Optional[dict]:
+    """Extended fields for a raw 24-bit DTC from the second export, or None.
+    Keys: description, cause, repair, impact, limp, trigger, module, j2012."""
+    return _load_extended().get(code)
+
+
+# --- combined catalog (single baked file, the primary source) --------------
+
+# tools/build_dtc_combined.py merges the manual + extended export into one record
+# per code (deduping overlaps) and writes dtc_combined.json. When present it is
+# the single source of truth; otherwise we fall back to merging the two legacy
+# sources at runtime, so the tool still works with only the manual installed.
+_COMBINED_FILENAME = "dtc_combined.json"
+
+
+def _load_combined() -> dict:
+    """Build {numeric_code: merged_record} from the baked combined file. Cached."""
+    global _combined
+    if _combined is not None:
+        return _combined
+
+    _load()  # resolve _catalog_dir
+    _combined = {}
+    candidates = [
+        # Bundled-with-the-app copy: this is what ships in the packaged build
+        # (collect_data_files picks up fiskeretta/data/*) and also works from
+        # source. __file__ resolves under sys._MEIPASS when frozen.
+        Path(__file__).resolve().parent / "data" / _COMBINED_FILENAME,
+        _catalog_dir / _COMBINED_FILENAME if _catalog_dir else None,
+        _REPO_ROOT.parent / "docs" / "DTC" / _COMBINED_FILENAME,
+        _REPO_ROOT / "docs" / "DTC" / _COMBINED_FILENAME,
+        Path.home() / ".config" / "fiskeretta" / _COMBINED_FILENAME,
+    ]
+    for cand in candidates:
+        if not cand or not Path(cand).is_file():
+            continue
+        try:
+            data = json.loads(Path(cand).read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        for key, row in data.items():
+            try:
+                _combined[int(key)] = row
+            except (ValueError, TypeError):
+                continue
+        break
+    return _combined
+
+
+def lookup(code: int) -> Optional[dict]:
+    """The full merged record for a code: description, module, manual
+    troubleshooting (subsystem/failure_event/steps/note), and the export's
+    impact/limp/repair/trigger. Reads the baked combined file when present, else
+    assembles the same shape from the two legacy sources at runtime."""
+    combined = _load_combined()
+    if combined:
+        return combined.get(code)
+
+    ts = troubleshooting(code)
+    ext = _load_extended().get(code)
+    if not ts and not ext:
+        return None
+    rec = dict(ts or {})
+    if ext:
+        for k in ("impact", "limp", "repair", "cause", "trigger"):
+            if ext.get(k):
+                rec[k] = ext[k]
+        rec.setdefault("description", ext.get("description"))
+        if ext.get("module"):
+            rec.setdefault("module", ext["module"])
+    return rec
+
+
 def module_for_code(code: int) -> Optional[str]:
     """The manual's module-section name for a code (e.g. 'MCU_R', 'BMS'), taken
     from the page header '<MODULE> DTC Troubleshooting'. Lets us identify a
     discovered ECU by reading one of its codes and looking up which section it
     lives in."""
+    rec = _load_combined().get(code)
+    if rec and rec.get("module"):
+        return rec["module"]
     row = _load().get(code)
     if not row:
         return None

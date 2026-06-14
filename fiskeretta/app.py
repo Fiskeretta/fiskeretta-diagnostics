@@ -11,7 +11,9 @@ app auto-connects to the remembered dongle.
 """
 
 import asyncio
+import sys
 import threading
+from pathlib import Path
 from typing import Optional
 
 from aiohttp import web
@@ -21,6 +23,35 @@ from . import server
 HOST = "127.0.0.1"
 PORT = 8765
 URL = f"http://{HOST}:{PORT}"
+
+
+def _icon_path() -> Optional[str]:
+    """Locate the app icon (PNG) in the dev tree or a PyInstaller bundle."""
+    here = Path(__file__).resolve().parent
+    candidates = [
+        here.parent / "packaging" / "icon_512.png",          # dev tree
+        Path(getattr(sys, "_MEIPASS", here)) / "packaging" / "icon_512.png",  # frozen
+        here / "data" / "icon_512.png",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return None
+
+
+def _set_macos_dock_icon(path: Optional[str]) -> None:
+    """Set the Dock icon for a non-bundled run. pywebview's Cocoa backend ignores
+    its `icon=` argument, so a plain `python -m fiskeretta.app` otherwise shows the
+    generic Python rocket. (A packaged .app gets its icon from the bundle instead.)"""
+    if not path:
+        return
+    try:
+        from AppKit import NSApplication, NSImage
+        img = NSImage.alloc().initWithContentsOfFile_(path)
+        if img:
+            NSApplication.sharedApplication().setApplicationIconImage_(img)
+    except Exception:
+        pass  # best effort — never block launch on a cosmetic icon
 
 # The server's asyncio loop (created on the background thread), captured so the
 # GUI thread can schedule a clean disconnect on window close.
@@ -68,12 +99,20 @@ def main() -> None:
     if not ready.wait(timeout=10):
         raise SystemExit("fiskeretta server failed to start within 10s.")
 
-    window = webview.create_window("Fiskeretta Diagnostics", URL, width=900, height=720, min_size=(640, 480))
+    icon = _icon_path()
+    if sys.platform == "darwin":
+        _set_macos_dock_icon(icon)  # Dock icon for the non-bundled dev run
+
+    window = webview.create_window("Fiskeretta Diagnostics", URL, width=1180, height=940, min_size=(900, 620))
     try:
         window.events.closing += lambda: _shutdown()
     except Exception:
         pass  # event API varies by pywebview version; daemon thread dies on exit anyway
-    webview.start()
+
+    # icon= sets the taskbar/window icon on Windows & Linux; macOS uses the Dock
+    # icon set above (its Cocoa backend ignores this argument).
+    start_kwargs = {"icon": icon} if (icon and sys.platform != "darwin") else {}
+    webview.start(**start_kwargs)
 
 
 if __name__ == "__main__":

@@ -21,8 +21,18 @@ from .core import ElmSession, Log
 CONFIG_DIR = Path.home() / ".config" / "fiskeretta"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
-# One-time adapter setup: reset, echo off, ISO 15765-4 CAN, auto-format, long msgs.
-ADAPTER_SETUP = ("ATZ", "ATE0", "ATSP6", "ATCAF1", "ATAL")
+# Post-reset adapter config: echo off, ISO 15765-4 CAN, auto-format, long msgs,
+# headers off, default receive filter. The last two explicitly undo any leftover
+# monitor / open-filter state from a crashed probe.
+ADAPTER_CONFIG = ("ATE0", "ATSP6", "ATCAF1", "ATAL", "ATH0", "ATCRA")
+
+# Hard ceiling on a single open attempt. CoreBluetooth's connect and the GATT
+# notify-subscribe have no reliable timeout of their own, so a wedged BLE stack
+# (a half-open link left by a force-quit, or an adapter still streaming from an
+# interrupted monitor) could otherwise hang the UI on "connecting…" forever.
+# Must exceed a healthy connect: BLE link ~5s + reset/config ~23s worst case
+# (2×1.5 spaces + 2×4 ATZ + 6×2 config), so 35s leaves headroom.
+CONNECT_TIMEOUT = 35.0
 
 T = TypeVar("T")
 
@@ -87,20 +97,37 @@ class ConnectionManager:
             return True
         await self._teardown()  # clear any half-open state
 
-        device = await self._find_device()
-        if not device:
-            self.log("No dongle found. Is it plugged into the OBD2 port and the car awake?")
-            return False
-
-        try:
-            await self._open(device)
-        except Exception as exc:  # surface any connect failure to the UI
-            self.log(f"Connect failed: {exc}")
-            await self._teardown()
-            return False
-
-        _save_device(device.address, device.name)
-        return True
+        # Open under a hard ceiling so a wedged BLE stack can never hang on
+        # "connecting…". One retry — but with a *fresh* device handle and a brief
+        # settle: on macOS a timed-out attempt can leave the CoreBluetooth
+        # peripheral mid-connect, so reusing the same handle would just re-hit it.
+        for attempt in (1, 2):
+            device = await self._find_device()
+            if not device:
+                self.log("No dongle found. Is it plugged into the OBD2 port and the car awake?")
+                return False
+            try:
+                await asyncio.wait_for(self._open(device), timeout=CONNECT_TIMEOUT)
+                _save_device(device.address, device.name)
+                return True
+            except asyncio.CancelledError:  # Stop pressed mid-connect
+                await self._teardown()
+                raise
+            except asyncio.TimeoutError:
+                await self._teardown()
+                if attempt == 1:
+                    self.log(f"Connect timed out after {CONNECT_TIMEOUT:.0f}s — letting the "
+                             "adapter settle, then retrying once…")
+                    await asyncio.sleep(1.5)  # let the BLE stack release the stuck peripheral
+                    continue
+                self.log("The dongle didn't finish the handshake. Power-cycle it "
+                         "(unplug/replug from the OBD2 port) and press Reconnect.")
+                return False
+            except Exception as exc:  # surface any connect failure to the UI
+                self.log(f"Connect failed: {exc}")
+                await self._teardown()
+                return False
+        return False
 
     async def _find_device(self):
         address = self.device_address or _load_saved_address()
@@ -115,24 +142,62 @@ class ConnectionManager:
 
     async def _open(self, device) -> None:
         client = BleakClient(device, disconnected_callback=self._on_disconnect)
-        await client.connect()
-        write_char, notify_char = core.find_uart_pair(client)
-        if not write_char or not notify_char:
-            await client.disconnect()
-            raise RuntimeError("no write+notify characteristic pair on the dongle")
+        try:
+            self.log("Opening BLE link to the dongle…")
+            await client.connect()
+            write_char, notify_char = core.find_uart_pair(client)
+            if not write_char or not notify_char:
+                raise RuntimeError("no write+notify characteristic pair on the dongle")
+            session = ElmSession(client, write_char, notify_char)
+            self.log("Subscribing to adapter notifications…")
+            await session.__aenter__()
+            self.log("Setting up adapter (halt any stuck stream, reset, ISO 15765-4 CAN, auto-format)...")
+            await self._reset_and_configure(session)
+            self._client = client
+            self._session = session
+            self.device_name = device.name
+            self.device_address = device.address
+            self.log(f"Connected to {device.name or '(unnamed)'} ({device.address}).")
+        except BaseException:  # failure, timeout-cancel, or Stop — never leak a half-open BLE link
+            try:
+                # Bound the cleanup too: a hung disconnect would otherwise stall
+                # the timeout-cancel that sent us here. Swallow *everything* here
+                # (incl. a second CancelledError) so the original exception — the
+                # one _ensure_locked branches on — is always what propagates.
+                await asyncio.wait_for(client.disconnect(), timeout=5.0)
+            except BaseException:
+                pass
+            raise
 
-        session = ElmSession(client, write_char, notify_char)
-        await session.__aenter__()
-        self.log("Setting up adapter (reset, echo off, ISO 15765-4 CAN, auto-format, long messages)...")
-        for cmd in ADAPTER_SETUP:
-            reply = await session.send(cmd)
+    async def _reset_and_configure(self, session: ElmSession) -> None:
+        """Bring the adapter to a known state, recovering even if a prior crash
+        left it mid-monitor (streaming) or with an open filter — that state can
+        swallow a plain ATZ, so we stop the stream first and retry the reset."""
+        # 1. A lone character stops a running monitor (ATMA); do it before ATZ so
+        #    the reset isn't lost in a flood of streamed frames.
+        for _ in range(2):
+            try:
+                await session.send(" ", timeout=1.5)
+            except Exception:
+                pass
+        # 2. Reset — retry, since the first ATZ can be contaminated by the stream.
+        for _ in range(2):
+            try:
+                reply = await session.send("ATZ", timeout=4.0)
+            except Exception:
+                reply = ""
+            self.log(f"  {'ATZ':10s} -> {reply!r}")
+            if "ELM" in reply.upper():
+                break
+        # 3. Configure (incl. headers off + filter reset to undo leftover state).
+        #    A healthy adapter answers each in well under a second; the short
+        #    timeout keeps the whole config phase inside CONNECT_TIMEOUT.
+        for cmd in ADAPTER_CONFIG:
+            try:
+                reply = await session.send(cmd, timeout=2.0)
+            except Exception as exc:
+                reply = f"(error: {exc})"
             self.log(f"  {cmd:10s} -> {reply!r}")
-
-        self._client = client
-        self._session = session
-        self.device_name = device.name
-        self.device_address = device.address
-        self.log(f"Connected to {device.name or '(unnamed)'} ({device.address}).")
 
     def _on_disconnect(self, _client) -> None:
         # bleak calls this from its loop when the BLE link drops. Clear state;
@@ -142,15 +207,20 @@ class ConnectionManager:
         self.log("BLE link dropped — will reconnect on next action.")
 
     async def _teardown(self) -> None:
-        if self._session is not None:
-            try:
-                await self._session.__aexit__(None, None, None)
-            except Exception:
-                pass
-        if self._client is not None:
-            try:
-                await self._client.disconnect()
-            except Exception:
-                pass
-        self._session = None
-        self._client = None
+        # Clear state unconditionally — even if an await below is interrupted by a
+        # (second) cancel, we must not leave a stale _client/_session that would
+        # make `connected` lie on the next attempt.
+        try:
+            if self._session is not None:
+                try:
+                    await self._session.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            if self._client is not None:
+                try:
+                    await self._client.disconnect()
+                except Exception:
+                    pass
+        finally:
+            self._session = None
+            self._client = None

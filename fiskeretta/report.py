@@ -31,20 +31,26 @@ _TIER_ORDER = {ACTIVE: 0, HISTORICAL: 1, CLEAR: 2, UNREACHABLE: 3, NOT_REACHED: 
 
 
 def _dtc_dict(d: uds.Dtc) -> dict:
-    info = dtc_catalog.troubleshooting(d.code) or {}
+    # Single merged record from the combined catalog (manual troubleshooting +
+    # the second export's impact/limp/repair/trigger, deduped at build time).
+    rec = dtc_catalog.lookup(d.code) or {}
     return {
         "code": f"0x{d.code_hex}",
         "j2012": dtc_catalog.j2012(d.code),
         "status_byte": d.status,
         "failing_now": d.is_failing_now,
         "confirmed": d.is_confirmed,
-        "description": d.description,
-        # Full troubleshooting (offline, from the manual) for the drill-down.
-        "page": info.get("page"),
-        "subsystem": info.get("subsystem"),
-        "failure_event": info.get("failure_event"),
-        "steps": info.get("steps"),
-        "note": info.get("note"),
+        "description": rec.get("description"),
+        "page": rec.get("page"),
+        "subsystem": rec.get("subsystem"),
+        "failure_event": rec.get("failure_event"),
+        "steps": rec.get("steps"),
+        "note": rec.get("note"),
+        "impact": rec.get("impact"),
+        "limp": rec.get("limp"),
+        "repair": rec.get("repair"),
+        "cause": rec.get("cause"),
+        "trigger": rec.get("trigger"),
     }
 
 
@@ -95,8 +101,9 @@ def build_from_report(report: dict, vehicle: Optional[dict] = None,
     }
 
 
-async def build_scan_result(session, log=None) -> dict:
-    """Run a full scan against a live session: VIN + decode, then all DTCs."""
+async def build_scan_result(session, log=None, progress=None) -> dict:
+    """Run a full scan against a live session: VIN + decode, then all DTCs.
+    `progress(done, total, name)` is forwarded for a live scan indicator."""
     vehicle = {}
     try:
         if log:
@@ -115,7 +122,7 @@ async def build_scan_result(session, log=None) -> dict:
     labels = {k: t["label"] for k, t in targets_full.items()}
     if log:
         log(f"Scanning {len(targets)} modules for DTCs…")
-    report = await uds.read_all_dtcs(session, log=None, targets=targets)
+    report = await uds.read_all_dtcs(session, log=None, targets=targets, progress=progress)
     result = build_from_report(report, vehicle, labels=labels, not_reached_list=registry.not_reached())
 
     s = result["summary"]

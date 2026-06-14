@@ -57,6 +57,28 @@ def load_scan(scan_id: str) -> Optional[dict]:
         return None
 
 
+def delete_scan(scan_id: str) -> bool:
+    try:
+        (SCANS_DIR / f"{scan_id}.json").unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
+
+
+def clear_scans() -> int:
+    """Delete every saved scan; returns how many were removed."""
+    if not SCANS_DIR.is_dir():
+        return 0
+    n = 0
+    for path in SCANS_DIR.glob("scan-*.json"):
+        try:
+            path.unlink()
+            n += 1
+        except OSError:
+            pass
+    return n
+
+
 def save_discovery(ecus: list) -> Optional[Path]:
     """Persist the latest ECU-discovery result."""
     try:

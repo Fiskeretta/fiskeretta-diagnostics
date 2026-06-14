@@ -12,6 +12,50 @@ the DTC manual — plain-English descriptions and repair steps.
 > Built on protocol knowledge published by the Fisker Owners Association
 > community (`puddletools/CAN`, `puddletools/SaavyScripts`). Use at your own risk.
 
+## Quick start (for drivers)
+
+You need one thing: a **Vgate vLinker FD+** Bluetooth OBD2 adapter (about $40).
+
+1. **Plug the vLinker** into the OBD2 port — it's under the dash, just above
+   your left knee on the Ocean.
+2. **Switch the car to ON (Ready).** Sit in the driver's seat with your foot
+   *off* the brake and press START once; the dash should light up. The car must
+   be awake or the diagnostic bus is asleep and nothing will answer.
+3. **Open Fiskeretta.** On first launch you'll see a short safety notice — read
+   it and click **Continue**.
+4. That's it. The app finds the dongle over Bluetooth, connects on its own, and
+   automatically reads every module. No pairing, no settings.
+
+> **First-launch security warning (one time).** The app isn't code-signed, so
+> the OS will flag it the first time:
+>
+> - **macOS** — "Fiskeretta can't be opened because it is from an unidentified
+>   developer." Right-click (or Control-click) the app → **Open** → **Open**.
+>   If macOS still refuses, go to **System Settings → Privacy & Security**,
+>   scroll down, and click **Open Anyway** next to the Fiskeretta message, then
+>   launch it again.
+> - **Windows** — a blue **"Windows protected your PC"** SmartScreen box. Click
+>   **More info** → **Run anyway**.
+>
+> You only do this once per machine. (The warning is just because the app is
+> unsigned, not because anything is wrong. Removing it entirely would require a
+> paid Apple Developer ID and a Windows signing certificate — not needed to use
+> the app.)
+
+**What you'll see**
+
+- **Active faults** — what's wrong *right now*. Start here.
+- **Historical** — codes the car logged before but isn't reporting now.
+- **Healthy / Unreachable** — modules that answered clean, or didn't answer.
+- Click any code to expand it: when it happened, what it means, and the repair
+  steps from the Fisker service manual.
+- **Export for AI** — copies a ready-made prompt (your active faults + context)
+  to paste into ChatGPT/Claude for a plain-English second opinion.
+- **About** (bottom-left) — version number and the safety notice again.
+
+**Safety:** only use it while the car is safely **parked** — never while
+driving. Clearing codes permanently erases the car's stored diagnostic history.
+
 ## What it does today
 
 - Connects to the dongle over BLE and holds one persistent connection.
@@ -35,10 +79,15 @@ Package a double-click app with `packaging/build.sh` (see `packaging/README.md`)
 
 ## DTC descriptions
 
-The tool ships with **no** DTC text of its own. If you have a local copy of the
-Fisker DTC manual (as `dtc_index.json` + `fisker_dtc.jsonl`), point
-`FISKERETTA_DTC_CATALOG` at it or drop it in `~/.config/fiskeretta/`, and scans
-translate automatically. Without it, codes show as raw hex.
+The packaged app **bundles** the combined Fisker DTC catalog
+(`fiskeretta/data/dtc_combined.json`, ~4,000 codes), so descriptions and repair
+steps work out of the box — no setup. The About box shows how many codes loaded.
+
+For development you can override the bundled data: point
+`FISKERETTA_DTC_CATALOG` at a `dtc_index.json` or drop catalog files in
+`~/.config/fiskeretta/`. Regenerate the bundled file with
+`tools/build_dtc_combined.py` after updating the source manual/export. Any code
+not in the catalog still shows, just as raw hex.
 
 ## Status
 
