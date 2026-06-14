@@ -92,7 +92,7 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     # Connect to the dongle right away (even while the first-run disclaimer is
     # up) so it's ready the moment the user accepts. The *scan* is gated client
     # side — it only fires once the user clicks Continue.
-    spawn(_auto_connect, "connecting")
+    spawn(lambda: _do_connect(ws), "connecting")
 
     async for msg in ws:
         if msg.type != WSMsgType.TEXT:
@@ -108,10 +108,21 @@ async def ws_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _auto_connect() -> None:
-    """Connect on launch (first client attach) if not already connected."""
-    if not _manager.connected:
-        await _manager.connect()
+async def _do_connect(ws) -> None:
+    """Auto-connect, and if the dongle can't be identified automatically, send the
+    scanned device list so the UI can show a picker."""
+    if _manager.connected:
+        return
+    await _manager.connect()
+    if not _manager.connected and _manager.needs_pick and not ws.closed:
+        await ws.send_json({"type": "device_picker", "devices": _manager.candidates})
+
+
+async def _connect_device(ws, payload) -> None:
+    """Connect to a user-picked device; on failure, rescan and re-offer the picker."""
+    ok = await _manager.connect_to(payload.get("address"), payload.get("name"))
+    if not ok:
+        await _do_connect(ws)  # rescan: may auto-connect now, else re-show the picker
 
 
 async def _handle(payload, ws, log, send_status, op, spawn) -> None:
@@ -149,7 +160,8 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
 
     # long, cancellable operations — run as a tracked background task
     long_ops = {
-        "connect": (lambda: _manager.connect(), "connecting"),
+        "connect": (lambda: _do_connect(ws), "connecting"),
+        "connect_device": (lambda: _connect_device(ws, payload), "connecting"),
         "read_vin": (lambda: run_read_vin(log), "running"),
         "read_dtcs": (lambda: run_read_dtcs(log), "running"),
         "drill_failing": (lambda: _manager.run(lambda s: uds.drill_failing_dtcs(s, log)), "running"),

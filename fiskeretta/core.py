@@ -12,7 +12,17 @@ from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 from bleak.backends.device import BLEDevice
 
-NAME_HINTS = ("vlink", "obd", "elm")
+NAME_HINTS = ("vlink", "obd", "elm", "veepeak", "obdii", "ic")
+
+# Service UUIDs commonly exposed by ELM327 BLE adapters. We match on these as well
+# as the name because on Windows the advertised device *name* frequently doesn't
+# come through (it almost always does on macOS CoreBluetooth) — without a second
+# signal the dongle can't be told apart from any other nearby BLE device.
+UART_SERVICE_UUIDS = {
+    "6e400001-b5a3-f393-e0a9-e50e24dcca9e",  # Nordic UART Service
+    "0000ffe0-0000-1000-8000-00805f9b34fb",  # HM-10 / many ELM clones
+    "0000fff0-0000-1000-8000-00805f9b34fb",  # common ELM327 clone UART
+}
 
 # ATZ      - reset the adapter
 # ATE0     - turn off command echo (keeps responses easy to parse)
@@ -26,35 +36,65 @@ PROMPT = b">"
 Log = Callable[[str], None]
 
 
-async def discover(log: Log, timeout: float = 10.0, quiet: bool = False) -> list[BLEDevice]:
-    """Scan for BLE devices. `quiet` suppresses the chatty per-device listing —
-    the app drives discovery via the connection manager and doesn't want the
-    noise in its log; the CLI leaves quiet=False to show the full list."""
+async def discover(log: Log, timeout: float = 10.0, quiet: bool = False) -> list[tuple]:
+    """Scan for BLE devices, returning (BLEDevice, AdvertisementData) pairs.
+
+    We keep the advertisement data (not just the device) so callers can match on
+    advertised service UUIDs and signal strength, not only the name — the name is
+    often missing on Windows. `quiet` suppresses the per-device listing the CLI
+    wants but the app's connection manager doesn't."""
     if not quiet:
         log(f"Scanning for BLE devices ({timeout:.0f}s) — make sure the vLinker is plugged into the car's OBD2 port...")
-    devices = await BleakScanner.discover(timeout=timeout)
-    if not devices:
+    found = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    pairs = list(found.values())  # [(BLEDevice, AdvertisementData), ...]
+    if not pairs:
         if not quiet:
             log("No BLE devices found. Is the dongle plugged in and the ignition on (Key On, Engine Off)?")
         return []
 
     if not quiet:
-        log(f"Found {len(devices)} device(s):")
-        for d in devices:
-            flag = " <-- looks like the vLinker" if _looks_like_vlinker(d) else ""
-            log(f"  {d.name or '(unnamed)'}  {d.address}{flag}")
-    return devices
+        log(f"Found {len(pairs)} device(s):")
+        for d, adv in pairs:
+            flag = " <-- looks like the vLinker" if _looks_like_vlinker(d, adv) else ""
+            log(f"  {_adv_name(d, adv) or '(unnamed)'}  {d.address}{flag}")
+    return pairs
 
 
-def _looks_like_vlinker(d: BLEDevice) -> bool:
-    return bool(d.name) and any(h in d.name.lower() for h in NAME_HINTS)
+def _adv_name(d: BLEDevice, adv) -> Optional[str]:
+    """The device's name from either the BLEDevice or the advertisement."""
+    return d.name or getattr(adv, "local_name", None)
 
 
-def best_guess(devices: list[BLEDevice]) -> Optional[BLEDevice]:
-    hinted = [d for d in devices if _looks_like_vlinker(d)]
+def _looks_like_vlinker(d: BLEDevice, adv) -> bool:
+    name = _adv_name(d, adv)
+    if name and any(h in name.lower() for h in NAME_HINTS):
+        return True
+    svc = getattr(adv, "service_uuids", None) or []
+    return any(str(u).lower() in UART_SERVICE_UUIDS for u in svc)
+
+
+def best_guess(pairs: list[tuple]) -> Optional[BLEDevice]:
+    """Return the dongle only if exactly one device clearly looks like it — so we
+    never silently connect to a random nearby device when we're unsure."""
+    hinted = [d for d, adv in pairs if _looks_like_vlinker(d, adv)]
     if len(hinted) == 1:
         return hinted[0]
     return None
+
+
+def candidate_list(pairs: list[tuple]) -> list[dict]:
+    """Flatten a scan into pickable rows for the UI device picker, likely matches
+    and stronger signals first."""
+    rows = []
+    for d, adv in pairs:
+        rows.append({
+            "address": d.address,
+            "name": _adv_name(d, adv),
+            "rssi": getattr(adv, "rssi", None),
+            "likely": _looks_like_vlinker(d, adv),
+        })
+    rows.sort(key=lambda r: (not r["likely"], -(r["rssi"] if r["rssi"] is not None else -999)))
+    return rows
 
 
 def find_uart_pair(client: BleakClient):

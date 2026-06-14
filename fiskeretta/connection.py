@@ -63,6 +63,10 @@ class ConnectionManager:
         self._lock = asyncio.Lock()
         self.device_name: Optional[str] = None
         self.device_address: Optional[str] = None
+        # When auto-connect can't identify the dongle, it leaves the scanned
+        # devices here and sets needs_pick so the UI can offer a device picker.
+        self.candidates: list[dict] = []
+        self.needs_pick: bool = False
 
     @property
     def connected(self) -> bool:
@@ -76,6 +80,23 @@ class ConnectionManager:
         device (or it isn't in range)."""
         async with self._lock:
             return await self._ensure_locked()
+
+    async def connect_to(self, address: str, name: Optional[str] = None) -> bool:
+        """Connect to a specific user-chosen device (from the picker) by address,
+        and remember it so future launches reconnect to it automatically."""
+        async with self._lock:
+            if self.connected:
+                return True
+            await self._teardown()
+            self.needs_pick = False
+            if not address:
+                return False
+            self.log(f"Connecting to selected device ({address})…")
+            device = await BleakScanner.find_device_by_address(address, timeout=10.0)
+            if not device:
+                self.log("That device isn't in range anymore — make sure it's powered, then Rescan.")
+                return False
+            return await self._attempt_open(device)
 
     async def disconnect(self) -> None:
         async with self._lock:
@@ -96,16 +117,47 @@ class ConnectionManager:
         if self.connected:
             return True
         await self._teardown()  # clear any half-open state
+        self.needs_pick = False
 
-        # Open under a hard ceiling so a wedged BLE stack can never hang on
-        # "connecting…". One retry — but with a *fresh* device handle and a brief
-        # settle: on macOS a timed-out attempt can leave the CoreBluetooth
-        # peripheral mid-connect, so reusing the same handle would just re-hit it.
+        # 1. Saved dongle fast path — connect straight to the remembered address.
+        saved = self.device_address or _load_saved_address()
+        if saved:
+            self.log(f"Connecting to saved dongle ({saved})...")
+            device = await BleakScanner.find_device_by_address(saved, timeout=10.0)
+            if device and await self._attempt_open(device):
+                return True
+            self.log("Saved dongle not reachable — scanning...")
+
+        # 2. Scan, and auto-connect ONLY if exactly one device clearly looks like
+        #    the dongle. We never blindly grab an arbitrary device: on Windows the
+        #    advertised name is often missing, and connecting to a random nearby
+        #    BLE device is what made the app look like it "wouldn't connect".
+        pairs = await core.discover(self.log, quiet=True)
+        match = core.best_guess(pairs)
+        if match and await self._attempt_open(match):
+            return True
+
+        # 3. Couldn't identify it — hand the scanned list to the UI so the user can
+        #    pick their adapter once (the choice is then remembered).
+        self.candidates = core.candidate_list(pairs)
+        self.needs_pick = True
+        if self.candidates:
+            self.log(f"Couldn't auto-identify the dongle among {len(self.candidates)} "
+                     "Bluetooth device(s) — pick it from the list.")
+        else:
+            self.log("No Bluetooth devices found. Is the dongle powered (car awake) "
+                     "and is Bluetooth turned on?")
+        return False
+
+    async def _attempt_open(self, device) -> bool:
+        """One bounded connect+configure attempt, with a single fresh-handle retry.
+
+        Returns True on success (and remembers the device); logs and tears down on
+        failure. Open runs under a hard ceiling so a wedged BLE stack can never
+        hang on "connecting…". The retry uses a *fresh* device handle and a brief
+        settle: on macOS a timed-out attempt can leave the CoreBluetooth peripheral
+        mid-connect, so reusing the same handle would just re-hit it."""
         for attempt in (1, 2):
-            device = await self._find_device()
-            if not device:
-                self.log("No dongle found. Is it plugged into the OBD2 port and the car awake?")
-                return False
             try:
                 await asyncio.wait_for(self._open(device), timeout=CONNECT_TIMEOUT)
                 _save_device(device.address, device.name)
@@ -119,26 +171,18 @@ class ConnectionManager:
                     self.log(f"Connect timed out after {CONNECT_TIMEOUT:.0f}s — letting the "
                              "adapter settle, then retrying once…")
                     await asyncio.sleep(1.5)  # let the BLE stack release the stuck peripheral
+                    fresh = await BleakScanner.find_device_by_address(device.address, timeout=10.0)
+                    if fresh:
+                        device = fresh
                     continue
                 self.log("The dongle didn't finish the handshake. Power-cycle it "
-                         "(unplug/replug from the OBD2 port) and press Reconnect.")
+                         "(unplug/replug from the OBD2 port) and try again.")
                 return False
             except Exception as exc:  # surface any connect failure to the UI
                 self.log(f"Connect failed: {exc}")
                 await self._teardown()
                 return False
         return False
-
-    async def _find_device(self):
-        address = self.device_address or _load_saved_address()
-        if address:
-            self.log(f"Connecting to saved dongle ({address})...")
-            device = await BleakScanner.find_device_by_address(address, timeout=10.0)
-            if device:
-                return device
-            self.log("Saved dongle not in range — scanning...")
-        devices = await core.discover(self.log, quiet=True)
-        return core.best_guess(devices) or (devices[0] if devices else None)
 
     async def _open(self, device) -> None:
         client = BleakClient(device, disconnected_callback=self._on_disconnect)
