@@ -18,7 +18,7 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
-from . import diff, dtc_catalog, modules, registry, report, storage, uds
+from . import bms_signals, diff, dtc_catalog, modules, registry, report, storage, uds
 from .connection import ConnectionManager
 from .version import __version__
 
@@ -167,6 +167,7 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
         "monitor": (lambda: run_monitor(ws, log, seconds=int(payload.get("seconds", 10))), "running"),
         "functional": (lambda: run_functional(log), "running"),
         "generic_obd": (lambda: run_generic_obd(ws, log), "running"),
+        "bms_sweep": (lambda: run_bms_sweep(ws, log, payload), "running"),
         "deep_identify": (lambda: run_deep_identify(log), "running"),
         "no_filter": (lambda: run_no_filter(log), "running"),
         "clear_dtcs": (lambda: run_clear_dtcs(ws, log, payload.get("modules", [])), "running"),
@@ -429,6 +430,42 @@ async def run_generic_obd(ws, log) -> None:
     result = await _manager.run(lambda s: uds.probe_generic_obd(s, log))
     if not ws.closed:
         await ws.send_json({"type": "generic_obd", **result})
+
+
+async def run_bms_sweep(ws, log, payload) -> None:
+    """Sweep UDS 0x22 DIDs on the BMS (default 0x7E1) to discover live-data
+    signals. Range is configurable; one sweep is capped at 4096 DIDs."""
+    try:
+        start = int(str(payload.get("start", "F180")), 16)
+        end = int(str(payload.get("end", "F1FF")), 16)
+    except (TypeError, ValueError):
+        log("Bad DID range — use hex like F180.")
+        return
+    start = max(0, min(start, 0xFFFF))   # DIDs are 2-byte identifiers
+    end = max(0, min(end, 0xFFFF))
+    if end < start:
+        start, end = end, start
+    end = min(end, start + 4095)  # cap one sweep at 4096 DIDs
+    req, resp = 0x7E1, 0x7E9      # BMS; the UI exposes no other target
+    dids = range(start, end + 1)
+    log(f"Sweeping DIDs 0x{start:04X}–0x{end:04X} on 0x{req:03X} ({len(dids)} DIDs)…")
+
+    def progress(done, total, did):
+        if not ws.closed and (done % 16 == 0 or done == total):
+            asyncio.create_task(ws.send_json(
+                {"type": "scan_progress", "done": done, "total": total, "name": f"DID {did:04X}"}))
+
+    rows = await _manager.run(lambda s: uds.sweep_dids(s, req, resp, dids, log, progress=progress))
+    for r in rows:
+        dec = bms_signals.decode_hex(r["did"], r["raw"])
+        if dec:
+            r["decoded"] = dec
+    path = storage.save_bms_dids({"request": f"0x{req:03X}", "range": [f"{start:04X}", f"{end:04X}"], "rows": rows})
+    if path:
+        log(f"Saved DID sweep to {path}")
+    if not ws.closed:
+        await ws.send_json({"type": "did_sweep", "module": f"0x{req:03X}",
+                            "start": f"{start:04X}", "end": f"{end:04X}", "rows": rows})
 
 
 async def run_monitor(ws, log, seconds: int = 10) -> None:

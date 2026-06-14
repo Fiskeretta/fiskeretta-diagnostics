@@ -932,6 +932,52 @@ async def probe_generic_obd(session: ElmSession, log: Optional[Log] = None) -> d
     return {"generic_obd": generic, "probes": results}
 
 
+# --- BMS / live-data DID sweep ---------------------------------------------
+
+async def sweep_dids(session: ElmSession, request_id: int, response_id: int,
+                     dids, log: Optional[Log] = None, progress=None) -> list:
+    """Sweep UDS 0x22 (ReadDataByIdentifier) across `dids` on one module, returning
+    [{did, length, raw}] for every DID that gives a positive (0x62) response.
+
+    Addressing is configured once up front, then bare 22xxxx requests are sent in
+    a loop. Adapter-error strings, timeouts, and negative responses (0x7F) are
+    skipped. Cancellation (asyncio) propagates out cleanly between requests."""
+    await configure_addressing(session, request_id, response_id, log)
+    dids = list(dids)
+    total = len(dids)
+    found = []
+    for i, did in enumerate(dids):
+        if not 0 <= did <= 0xFFFF:  # a DID is a 2-byte identifier; anything else
+            if progress:           # would build a malformed 22xxxx request
+                progress(i + 1, total, did)
+            continue
+        try:
+            reply = await session.send(f"22{did:04X}", timeout=5.0)
+        except asyncio.TimeoutError:
+            if progress:
+                progress(i + 1, total, did)
+            continue
+        try:
+            _check_adapter_error(reply)
+        except UdsError:
+            if progress:
+                progress(i + 1, total, did)
+            continue
+        payload = _extract_payload_bytes(reply)
+        if (len(payload) >= 3 and payload[0] == 0x22 + POSITIVE_RESPONSE_OFFSET
+                and payload[1] == (did >> 8) and payload[2] == (did & 0xFF)):
+            data = payload[3:]
+            found.append({"did": f"{did:04X}", "length": len(data),
+                          "raw": data.hex().upper()})
+            if log:
+                log(f"  DID {did:04X}: {len(data)} byte(s) = {data.hex().upper()}")
+        if progress:
+            progress(i + 1, total, did)
+    if log:
+        log(f"DID sweep done — {len(found)} of {total} DIDs responded.")
+    return found
+
+
 # --- Deep identification (fingerprint & compare ECUs) ----------------------
 
 # ISO 14229 identification DIDs (0xF1xx) worth fingerprinting an ECU by. The

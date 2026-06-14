@@ -130,6 +130,25 @@ def list_events() -> list[dict]:
     return out
 
 
+def save_bms_dids(data: dict) -> Optional[Path]:
+    """Persist the latest BMS/live-data DID sweep result (bms_dids.json)."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        path = CONFIG_DIR / "bms_dids.json"
+        payload = {"swept_at": datetime.now(timezone.utc).isoformat(), **data}
+        path.write_text(json.dumps(payload, indent=2))
+        return path
+    except OSError:
+        return None
+
+
+def load_bms_dids() -> Optional[dict]:
+    try:
+        return json.loads((CONFIG_DIR / "bms_dids.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def save_discovery(ecus: list) -> Optional[Path]:
     """Persist the latest ECU-discovery result."""
     try:
