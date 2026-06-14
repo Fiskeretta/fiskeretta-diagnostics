@@ -13,6 +13,8 @@ from typing import Optional
 
 from .paths import CONFIG_DIR, SCANS_DIR
 
+EVENTS_FILE = CONFIG_DIR / "events.jsonl"
+
 
 def save_scan(result: dict) -> Optional[Path]:
     """Write a scan result to disk, return its path (or None if it couldn't)."""
@@ -78,6 +80,54 @@ def clear_scans() -> int:
         except OSError:
             pass
     return n
+
+
+def record_event(event: dict) -> None:
+    """Append one event to the append-only history log (events.jsonl).
+    Used for clear events so the timeline shows the clear -> re-accumulate
+    pattern alongside scans. Best-effort; never raises."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        with EVENTS_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except OSError:
+        pass
+
+
+def record_clear(summary_before: Optional[dict], modules: Optional[list] = None) -> None:
+    """Record a DTC clear in the history log, stamping what was wiped (taken from
+    the most recent pre-clear scan summary) and which modules were targeted."""
+    sb = summary_before or {}
+    record_event({
+        "when": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00"),
+        "type": "clear",
+        "wiped": {
+            "active": sb.get("active") or 0,
+            "historical": sb.get("historical") or 0,
+            "comm": sb.get("comm") or 0,
+        },
+        "modules": modules or [],
+    })
+
+
+def list_events() -> list[dict]:
+    """All recorded events (clears), oldest-first as written. Tolerates a missing
+    file and skips any corrupt line."""
+    if not EVENTS_FILE.exists():
+        return []
+    out = []
+    try:
+        for line in EVENTS_FILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        return []
+    return out
 
 
 def save_discovery(ecus: list) -> Optional[Path]:

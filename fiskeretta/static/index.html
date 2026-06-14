@@ -161,6 +161,22 @@
   .clrow .cln{flex:1}
   .clrow .clc{display:flex;gap:5px}
   .clrow .clc .pill{font-size:10px;padding:2px 7px}
+  /* history view */
+  .hrow{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid var(--line-soft)}
+  .hrow.scan{cursor:pointer}
+  .hrow.scan:hover,.hrow.on{background:var(--surface-2)}
+  .hrow .hwhen{color:var(--dim);font-size:12px;min-width:130px}
+  .hrow .hsum{font-size:13px}
+  .hrow.clear{background:var(--amber-soft);color:oklch(0.86 0.08 78);font-weight:600;font-size:12.5px}
+  .hdiff{padding:8px 12px 12px 26px;border-bottom:1px solid var(--line-soft);background:var(--bg)}
+  .dgrp{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.04em;margin:8px 0 3px}
+  .drow{display:flex;align-items:center;gap:8px;font-size:12.5px;padding:2px 0}
+  .drow .dsign{width:12px;font-weight:700;text-align:center}
+  .drow.appeared .dsign{color:var(--red)} .drow.resolved .dsign{color:var(--accent)}
+  .drow .dmod{min-width:62px;color:var(--dim)}
+  .dcomm{font-size:12px;color:var(--faint);margin-top:8px;font-style:italic}
+  .chist{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--dim)}
+  .empty.small{padding:8px 0;font-size:12px}
 </style>
 </head>
 <body>
@@ -196,8 +212,9 @@ let connected=false, busy=false, connecting=false, started=false, accepted=false
 let liveResult=null, view=null, viewingSaved=false, viewingSavedId=null, savedScans=[];
 let cur="active", sortKey="code", sortDir=1, logBuf=[], lastDiscovery=[], lastMonitor=[];
 let showComm=false;
+let lastHistory=[], histSel=null, diffCache={};
 
-const NAV=[["active","Active faults"],["historical","Historical"],["healthy","Healthy"],["unreachable","Unreachable"],["log","Activity log"],["tools","Tools"]];
+const NAV=[["active","Active faults"],["historical","Historical"],["healthy","Healthy"],["unreachable","Unreachable"],["history","History"],["log","Activity log"],["tools","Tools"]];
 
 function copyText(t){
   if(navigator.clipboard&&navigator.clipboard.writeText) return navigator.clipboard.writeText(t);
@@ -224,6 +241,9 @@ ws.onmessage=(e)=>{
   else if(m.type==="module_check") onModuleCheck(m);
   else if(m.type==="discovery"){ lastDiscovery=m.ecus||[]; if(cur==="tools") renderPanel(); }
   else if(m.type==="monitor"){ lastMonitor=m.ids||[]; if(cur==="tools") renderPanel(); }
+  else if(m.type==="history"){ lastHistory=m.items||[]; if(cur==="history") renderPanel(); }
+  else if(m.type==="scan_diff"){ diffCache[m.scan_id]=m.diff; if(cur==="history") renderPanel(); }
+  else if(m.type==="code_history"){ onCodeHistory(m); }
 };
 
 function onConnection(m){
@@ -376,12 +396,12 @@ function renderNav(){
   }).join("");
 }
 function tipFor(k){
-  const t={active:"Faults failing right now",historical:"Stored faults not currently failing",healthy:"Modules with no stored faults",unreachable:"Modules that didn't answer, plus ones we haven't reached",log:"Adapter and scan output",tools:"Clear codes, find modules, advanced discovery"}[k];
+  const t={active:"Faults failing right now",historical:"Stored faults not currently failing",healthy:"Modules with no stored faults",unreachable:"Modules that didn't answer, plus ones we haven't reached",history:"Timeline of scans and clears, with per-scan changes",log:"Adapter and scan output",tools:"Clear codes, find modules, advanced discovery"}[k];
   return t?` data-tip="${t}"`:"";
 }
 $("nav").addEventListener("click",e=>{
   const n=e.target.closest(".nav"); if(!n||n.classList.contains("disabled")) return;
-  cur=n.dataset.k; renderNav(); renderPanel();
+  cur=n.dataset.k; if(cur==="history") send("history"); renderNav(); renderPanel();
 });
 $("run").addEventListener("click",()=>{ if(busy){ stopOp(); return; } if(connected){ if(viewingSaved) returnToLive(); send("scan"); } });
 $("reconnect").addEventListener("click",()=>send("connect"));
@@ -389,7 +409,7 @@ $("reconnect").addEventListener("click",()=>send("connect"));
 /* ---- panels ---- */
 function renderPanel(){
   const p=$("panel");
-  if(!view&&cur!=="log"&&cur!=="tools"){
+  if(!view&&cur!=="log"&&cur!=="tools"&&cur!=="history"){
     const onboard="Plug the vLinker into the car's OBD2 port and switch the car to ON (Ready). Fiskeretta finds the dongle and connects on its own — no setup needed.";
     const msg=busy?"Reading the car… one moment."
       :connecting?("Connecting to the dongle… "+onboard)
@@ -399,7 +419,7 @@ function renderPanel(){
     p.innerHTML=`<div class="empty">${msg}</div>`; return;
   }
   const banner=viewingSaved?`<div class="banner">Viewing saved scan · ${esc(fmtWhen(view.scanned_at))} <button class="linkbtn" onclick="returnToLive()">Return to live</button></div>`:"";
-  p.innerHTML=banner+({active:panelFaults("active"),historical:panelFaults("historical"),healthy:panelHealthy(),unreachable:panelUnreachable(),log:panelLog(),tools:panelTools()}[cur]||"");
+  p.innerHTML=banner+({active:panelFaults("active"),historical:panelFaults("historical"),healthy:panelHealthy(),unreachable:panelUnreachable(),history:panelHistory(),log:panelLog(),tools:panelTools()}[cur]||"");
 }
 const isActive=c=>c.failing_now;
 const isHistFault=c=>!c.failing_now && c.tier!=="comm";
@@ -466,6 +486,7 @@ function toggleComm(){ showComm=!showComm; renderPanel(); }
 window.toggleComm=toggleComm;
 function drillHTML(c){
   let h=`<div class="dsec"><h4>When it happened</h4><p class="occ">—</p></div>`;
+  h+=`<div class="dsec"><h4>History across your scans</h4><div class="chist">—</div></div>`;
   const meaning=c.subsystem||c.description;
   if(meaning) h+=`<div class="dsec"><h4>What it means</h4><p>${esc(meaning)}</p></div>`;
   if(c.failure_event) h+=`<div class="dsec"><h4>Failure condition</h4><p>${esc(c.failure_event)}</p></div>`;
@@ -483,7 +504,9 @@ function toggleRow(el){
   if(opening&&!el.dataset.fetched){
     el.dataset.fetched="1";
     const occ=el.querySelector(".occ");
-    if(viewingSaved){ if(occ) occ.textContent="Saved snapshot — connect live to read fault history."; return; }
+    // Cross-scan history reads saved scan files, so it works even on a saved view.
+    sendMsg({command:"code_history", module:el.dataset.module, code:el.dataset.code});
+    if(viewingSaved){ if(occ) occ.textContent="Saved snapshot — connect live to read on-car fault history."; return; }
     if(occ) occ.textContent="Reading fault history…";
     sendMsg({command:"code_detail", module:el.dataset.module, code:el.dataset.code});
   }
@@ -500,6 +523,18 @@ function onCodeDetail(m){
   const n=(m.records||[]).length; if(n>1) txt+=` — seen ${n}×`;
   if(occ) occ.textContent=txt;
   const w=el.querySelector(".fwhen"); if(w&&parts.length) w.textContent=parts.slice(0,2).join(" · ");
+}
+function onCodeHistory(m){
+  const el=document.querySelector(`.frow[data-module="${m.module}"][data-code="${m.code}"]`);
+  if(!el) return;
+  const box=el.querySelector(".chist");
+  if(!box) return;
+  const h=m.history||[];
+  if(!h.length){ box.textContent="Only seen in the current scan."; return; }
+  box.innerHTML=h.map(e=>{
+    const st=e.failing_now?"active":(e.tier==="comm"?"comm":"historical");
+    return `<span>${esc(fmtWhen(e.when))} — ${esc(st)}</span>`;
+  }).join("")+(h.length>1?`<span style="color:var(--faint);margin-top:3px">Seen in ${h.length} of your scans${h.some(e=>e.failing_now)&&h.some(e=>!e.failing_now)?" — recurring":""}.</span>`:"");
 }
 window.setSort=function(k){ if(sortKey===k) sortDir*=-1; else {sortKey=k;sortDir=1;} renderPanel(); };
 window.toggleRow=toggleRow; window.returnToLive=returnToLive;
@@ -521,6 +556,44 @@ function panelUnreachable(){
   }
   return h;
 }
+function panelHistory(){
+  const items=lastHistory||[];
+  const head=`<div class="phead"><span class="ptitle">History</span><span class="psub">${items.length} event${items.length===1?"":"s"} · newest first · click a scan for changes</span></div>`;
+  if(!items.length) return head+`<div class="empty">No history yet. Run a scan to start the timeline.</div>`;
+  return head+items.map(it=>{
+    if(it.kind==="clear"){
+      const w=it.wiped||{};
+      return `<div class="hrow clear"><span class="hwhen mono">${esc(fmtWhen(it.when))}</span><span>Cleared — wiped ${w.active||0} active / ${w.historical||0} historical${w.comm?` / ${w.comm} comm`:""}</span></div>`;
+    }
+    const comm=it.comm||0, hist=(it.historical||0)-comm, sel=it.id&&it.id===histSel;
+    return `<div class="hrow scan${sel?" on":""}" onclick="selHist('${esc(it.id||"")}')">`+
+      `<span class="hwhen mono">${esc(fmtWhen(it.when))}</span>`+
+      `<span class="hsum">${it.active||0} active · ${hist} historical${comm?` · ${comm} comm`:""}</span></div>`+
+      (sel?`<div class="hdiff">${renderDiff(it.id)}</div>`:"");
+  }).join("");
+}
+function selHist(id){
+  if(!id) return;
+  histSel = histSel===id ? null : id;
+  if(histSel && !(histSel in diffCache)) sendMsg({command:"scan_diff", scan_id:histSel});
+  renderPanel();
+}
+function renderDiff(id){
+  const d=diffCache[id];
+  if(!d) return `<div class="empty small">Computing changes…</div>`;
+  const rows=(arr,kind)=>arr.map(r=>`<div class="drow ${kind}"><span class="dsign">${kind==="appeared"?"+":"−"}</span><span class="dmod mono">${esc((r.module||"").toUpperCase())}</span><span class="dcode mono">${esc(r.j2012||r.code)}</span>${r.failing_now?`<span class="pill red">active</span>`:``}</div>`).join("");
+  let h="";
+  if(d.appeared.length) h+=`<div class="dgrp">+${d.appeared.length} appeared</div>`+rows(d.appeared,"appeared");
+  if(d.resolved.length) h+=`<div class="dgrp">−${d.resolved.length} resolved</div>`+rows(d.resolved,"resolved");
+  if(d.comm_appeared||d.comm_resolved){
+    const parts=[]; if(d.comm_appeared)parts.push(`+${d.comm_appeared}`); if(d.comm_resolved)parts.push(`−${d.comm_resolved}`);
+    const tot=(d.comm_appeared||0)+(d.comm_resolved||0);
+    h+=`<div class="dcomm">${parts.join(" / ")} communication code${tot===1?"":"s"} — common churn, collapsed</div>`;
+  }
+  if(!h) h=`<div class="empty small">No changes from the previous scan.</div>`;
+  return h;
+}
+window.selHist=selHist;
 function panelLog(){
   return `<div class="phead"><span class="ptitle">Activity log</span><span class="psub">adapter &amp; scan output</span><span class="topsp"></span><button class="linkbtn" onclick="copyText($('logRaw').textContent)">Copy</button></div><div class="logview" id="logRaw">${esc(logBuf.join("\n"))}</div>`;
 }

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from aiohttp import web, WSMsgType
 
-from . import dtc_catalog, modules, registry, report, storage, uds
+from . import diff, dtc_catalog, modules, registry, report, storage, uds
 from .connection import ConnectionManager
 from .version import __version__
 
@@ -146,6 +146,15 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
     if command == "load_scan":
         await send_loaded_scan(ws, payload.get("scan_id"))
         return
+    if command == "history":
+        await send_history(ws)
+        return
+    if command == "scan_diff":
+        await run_scan_diff(ws, payload.get("scan_id"))
+        return
+    if command == "code_history":
+        await run_code_history(ws, payload.get("module"), payload.get("code"))
+        return
 
     # long, cancellable operations — run as a tracked background task
     long_ops = {
@@ -193,6 +202,10 @@ async def run_clear_dtcs(ws, log, module_keys) -> None:
     then re-scan so the user sees what actually cleared vs. what came right back."""
     if not module_keys:
         return
+    # Snapshot the pre-clear state (newest saved scan) so the history timeline can
+    # show what was wiped — captured BEFORE the post-clear re-scan is saved.
+    pre = storage.list_scans()
+    pre_summary = pre[0] if pre else None
     targets = registry.scan_targets()
     attempted = []  # (key, label, known) in request order
 
@@ -211,6 +224,9 @@ async def run_clear_dtcs(ws, log, module_keys) -> None:
             log(f"  {key.upper()}: {'accepted' if ok else msg}")
 
     await _manager.run(_do)
+    # Stamp the clear event now — at clear time, before the re-scan — so it sorts
+    # just before (older than) the post-clear scan it triggers in the timeline.
+    storage.record_clear(pre_summary, module_keys)
 
     # Source of truth: the clear's own ack lags (radars/cameras reply "response
     # pending" then finish a moment later), so judge each module by what the car
@@ -239,6 +255,7 @@ async def run_clear_dtcs(ws, log, module_keys) -> None:
             results.append({"module": key, "label": label, "ok": False, "msg": f"{hist} still present"})
     if not ws.closed:
         await ws.send_json({"type": "clear_result", "results": results})
+        await send_history(ws)  # the clear is now in the timeline
 
 
 async def _run_full_scan(ws, log) -> dict:
@@ -264,6 +281,41 @@ async def run_scan(ws, log) -> None:
 async def send_saved_scans(ws) -> None:
     if not ws.closed:
         await ws.send_json({"type": "saved_scans", "scans": storage.list_scans()})
+
+
+async def send_history(ws) -> None:
+    """Merged timeline of saved scans + recorded clear events, newest-first."""
+    if not ws.closed:
+        items = diff.merge_history(storage.list_scans(), storage.list_events())
+        await ws.send_json({"type": "history", "items": items})
+
+
+async def run_scan_diff(ws, scan_id) -> None:
+    """Diff a saved scan against the chronologically previous one."""
+    if not scan_id:
+        return
+    ids = [s["id"] for s in storage.list_scans()]  # newest-first
+    if scan_id not in ids:
+        return
+    curr = storage.load_scan(scan_id)
+    if curr is None:
+        return
+    i = ids.index(scan_id)
+    prev_id = ids[i + 1] if i + 1 < len(ids) else None
+    prev = storage.load_scan(prev_id) if prev_id else None
+    if not ws.closed:
+        await ws.send_json({"type": "scan_diff", "scan_id": scan_id, "prev_id": prev_id,
+                            "diff": diff.diff_scans(prev, curr)})
+
+
+async def run_code_history(ws, module, code) -> None:
+    """Cross-scan history for one (module, code) across every saved scan."""
+    if not module or not code:
+        return
+    scans = [s for s in (storage.load_scan(x["id"]) for x in storage.list_scans()) if s]
+    if not ws.closed:
+        await ws.send_json({"type": "code_history", "module": module, "code": code,
+                            "history": diff.code_history(scans, module, code)})
 
 
 async def send_loaded_scan(ws, scan_id) -> None:
