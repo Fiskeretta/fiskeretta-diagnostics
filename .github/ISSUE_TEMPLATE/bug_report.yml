@@ -1,0 +1,51 @@
+name: Bug report
+description: Something isn't working
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for the report! The **Activity log** (in the app) is the single most useful thing to include.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Activity log
+      description: Copy the relevant lines from the app's Activity log tab.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: Shown in About (bottom-left), e.g. v1.0.0.
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS
+        - Windows
+        - Other / running from source
+    validations:
+      required: true
+  - type: input
+    id: hardware
+    attributes:
+      label: Car & dongle
+      placeholder: e.g. 2023 Fisker Ocean Extreme, Vgate vLinker FD+
