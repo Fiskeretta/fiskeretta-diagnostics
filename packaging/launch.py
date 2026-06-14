@@ -3,14 +3,21 @@
 import os
 import sys
 
-# Python.Runtime.dll (a .NET assembly loaded by pythonnet) P/Invokes back into
-# python3XX.dll. In a PyInstaller one-dir bundle that DLL lives in _internal/
-# (_MEIPASS). os.environ['PATH'] is not enough — the .NET CLR's LoadLibrary
-# doesn't reliably honour PATH changes made after process start. We need
-# AddDllDirectory (via os.add_dll_directory) which patches the search list at
-# the Windows API level and is always respected by subsequent LoadLibrary calls.
+# Python.Runtime.dll (a .NET assembly) P/Invokes back into python3XX.dll.
+# In a PyInstaller one-dir bundle that DLL lives in _internal/ (_MEIPASS),
+# which the .NET CLR's DllImport resolver doesn't search. Neither PATH nor
+# AddDllDirectory reliably fixes this — .NET P/Invoke uses its own search.
+# The guaranteed fix: pre-load python3XX.dll via ctypes so it's already in
+# the process module table. Any subsequent LoadLibrary("python3XX.dll") call,
+# including from .NET, gets the cached handle without a directory search.
 if hasattr(sys, '_MEIPASS') and sys.platform == 'win32':
-    os.add_dll_directory(sys._MEIPASS)
+    import ctypes
+    _pydll = os.path.join(
+        sys._MEIPASS,
+        f'python{sys.version_info.major}{sys.version_info.minor}.dll',
+    )
+    if os.path.exists(_pydll):
+        ctypes.WinDLL(_pydll)
 
 from fiskeretta.app import main
 
