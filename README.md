@@ -12,6 +12,19 @@ the DTC manual — plain-English descriptions and repair steps.
 > Built on protocol knowledge published by the Fisker Owners Association
 > community (`puddletools/CAN`, `puddletools/SaavyScripts`). Use at your own risk.
 
+## Download
+
+No install — just unzip and run:
+
+- **macOS** → [Download for Mac](https://github.com/Fiskeretta/fiskeretta-diagnostics/releases/latest/download/Fiskeretta-Diagnostics-macOS.zip)
+- **Windows** → [Download for Windows](https://github.com/Fiskeretta/fiskeretta-diagnostics/releases/latest/download/Fiskeretta-Diagnostics-Windows.zip)
+
+On Windows, keep the unzipped folder together — run `Fiskeretta Diagnostics.exe`
+inside it. The first launch shows a one-time "unidentified developer" /
+SmartScreen warning because the app isn't code-signed — see
+[the steps below](#quick-start-for-drivers) to get past it. All versions are on
+the [releases page](https://github.com/Fiskeretta/fiskeretta-diagnostics/releases).
+
 ## Quick start (for drivers)
 
 You need a **Vgate vLinker FD+** Bluetooth OBD2 adapter.
