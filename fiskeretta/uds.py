@@ -193,6 +193,19 @@ class Dtc:
         return bool(self.status & NOTEWORTHY_STATUS_MASK)
 
     @property
+    def category(self) -> str:
+        """First SAE J2012 letter: P/C/B/U (powertrain/chassis/body/network)."""
+        return dtc_catalog.j2012(self.code)[:1]
+
+    @property
+    def is_comm(self) -> bool:
+        """A network (U) code that's confirmed but not currently failing — the
+        benign bus-timeout/missing-message noise that re-accumulates on a parked
+        car as modules sleep. Hidden by default in the UI; an actively-failing U
+        code stays a real fault (is_failing_now → not comm)."""
+        return self.category == "U" and self.is_confirmed and not self.is_failing_now
+
+    @property
     def description(self) -> Optional[str]:
         """Human description from the local DTC catalog, if one is installed."""
         return dtc_catalog.describe(self.code)

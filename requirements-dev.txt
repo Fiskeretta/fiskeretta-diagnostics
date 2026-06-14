@@ -1,2 +1,5 @@
 # Build-only dependencies (packaging the native app). Not needed to run from source.
 pyinstaller>=6.0
+
+# Test dependencies — `python3 -m pytest`
+pytest>=8

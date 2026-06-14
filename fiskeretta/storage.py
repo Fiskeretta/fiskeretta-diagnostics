@@ -46,6 +46,7 @@ def list_scans() -> list[dict]:
             "scanned_at": result.get("scanned_at"),
             "active": summary.get("active"),
             "historical": summary.get("historical"),
+            "comm": summary.get("comm"),
         })
     return out
 

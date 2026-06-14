@@ -195,6 +195,7 @@ const fmtWhen = (iso) => { try { return new Date(iso).toLocaleString([], {month:
 let connected=false, busy=false, connecting=false, started=false, accepted=false;
 let liveResult=null, view=null, viewingSaved=false, viewingSavedId=null, savedScans=[];
 let cur="active", sortKey="code", sortDir=1, logBuf=[], lastDiscovery=[], lastMonitor=[];
+let showComm=false;
 
 const NAV=[["active","Active faults"],["historical","Historical"],["healthy","Healthy"],["unreachable","Unreachable"],["log","Activity log"],["tools","Tools"]];
 
@@ -327,7 +328,8 @@ function renderTop(){
   const bits=[v.year,v.make,v.model,v.series].filter(Boolean).join(" ");
   const drive=v.ev_drive?" · "+v.ev_drive:(v.drive_type?" · "+v.drive_type:"");
   $("veh").innerHTML=`<div class="vin mono">${esc(v.vin||"—")}</div><div class="model">${esc(bits||"Vehicle")}${esc(drive)}</div>`;
-  $("chips").innerHTML=`<span class="chip ${s.active?"red":"gray"} tnum">${s.active||0} active</span><span class="chip ${s.historical?"amber":"gray"} tnum">${s.historical||0} historical</span><span class="chip gray tnum">${s.modules_reachable||0} of ${s.modules_total||0} online</span>`;
+  const histShown=(s.historical||0)-(s.comm||0);
+  $("chips").innerHTML=`<span class="chip ${s.active?"red":"gray"} tnum">${s.active||0} active</span><span class="chip ${histShown?"amber":"gray"} tnum">${histShown} historical</span><span class="chip gray tnum">${s.modules_reachable||0} of ${s.modules_total||0} online</span>`;
   $("aiBtn").disabled=!view;
 }
 function renderScanSel(){
@@ -335,7 +337,7 @@ function renderScanSel(){
   $("scanTrig").textContent=cur?fmtWhen(cur.scanned_at):(viewingSaved?"Saved scan":"Live (latest)");
   let h=`<div class="smi live" onclick="pickLive()">Live (latest)</div>`;
   if(savedScans.length) h+=`<div class="smdiv"></div>`;
-  h+=savedScans.map(s=>`<div class="smi" onclick="pickScan('${esc(s.id)}')"><span class="smtxt">${esc(fmtWhen(s.scanned_at)||s.id)} · ${s.active||0}a ${s.historical||0}h</span><span class="smdel" data-tip="Delete this scan" onclick="event.stopPropagation();delScan('${esc(s.id)}')">✕</span></div>`).join("");
+  h+=savedScans.map(s=>`<div class="smi" onclick="pickScan('${esc(s.id)}')"><span class="smtxt">${esc(fmtWhen(s.scanned_at)||s.id)} · ${s.active||0}a ${(s.historical||0)-(s.comm||0)}h</span><span class="smdel" data-tip="Delete this scan" onclick="event.stopPropagation();delScan('${esc(s.id)}')">✕</span></div>`).join("");
   if(savedScans.length) h+=`<div class="smi clearall" onclick="clearAllScans()">Clear all saved scans</div>`;
   $("scanMenu").innerHTML=h;
 }
@@ -360,7 +362,7 @@ window.pickLive=pickLive; window.pickScan=pickScan; window.delScan=delScan; wind
 /* ---- sidebar ---- */
 function tierCounts(){
   const mods=(view&&view.modules)||[], s=(view&&view.summary)||{};
-  return {active:s.active||0, historical:s.historical||0,
+  return {active:s.active||0, historical:(s.historical||0)-(s.comm||0),
     healthy:mods.filter(m=>m.status==="clear").length,
     unreachable:mods.filter(m=>m.status==="unreachable").length};
 }
@@ -398,7 +400,9 @@ function renderPanel(){
   const banner=viewingSaved?`<div class="banner">Viewing saved scan · ${esc(fmtWhen(view.scanned_at))} <button class="linkbtn" onclick="returnToLive()">Return to live</button></div>`:"";
   p.innerHTML=banner+({active:panelFaults("active"),historical:panelFaults("historical"),healthy:panelHealthy(),unreachable:panelUnreachable(),log:panelLog(),tools:panelTools()}[cur]||"");
 }
-const isActive=c=>c.failing_now, isHist=c=>!c.failing_now;
+const isActive=c=>c.failing_now;
+const isHistFault=c=>!c.failing_now && c.tier!=="comm";
+const isComm=c=>!c.failing_now && c.tier==="comm";
 function groups(pred){
   return ((view&&view.modules)||[]).map(m=>({name:m.name,label:m.label,codes:(m.codes||[]).filter(pred)})).filter(g=>g.codes.length);
 }
@@ -412,29 +416,53 @@ function sortCodes(list){
   });
 }
 function caret(k){return sortKey===k?(sortDir>0?" ▲":" ▼"):"";}
-function panelFaults(tone){
-  const gs=groups(tone==="active"?isActive:isHist), s=(view&&view.summary)||{};
-  const n=tone==="active"?(s.active||0):(s.historical||0);
-  const head=`<div class="phead"><span class="ptitle">${tone==="active"?"Active faults":"Historical faults"}</span><span class="psub">${n} ${tone==="active"?"failing now":"stored"} across ${gs.length} module${gs.length===1?"":"s"}</span></div>`;
-  if(!gs.length) return head+`<div class="empty">${tone==="active"?"No active faults — nothing failing right now.":"No historical faults stored."}</div>`;
-  const cols=`<div class="fhead"><span></span><span data-k="code" onclick="setSort('code')">Code${caret("code")}</span><span data-k="desc" onclick="setSort('desc')">Description${caret("desc")}</span><span data-k="when" onclick="setSort('when')">When${caret("when")}</span><span>Status</span></div>`;
-  const body=gs.map(g=>`<div class="fgrp"><span class="gn">${esc(g.name.toUpperCase())}</span><span class="gf">${esc(g.label)} · ${g.codes.length}</span></div>`+
+const COLS=`<div class="fhead"><span></span><span data-k="code" onclick="setSort('code')">Code${caret("code")}</span><span data-k="desc" onclick="setSort('desc')">Description${caret("desc")}</span><span data-k="when" onclick="setSort('when')">When${caret("when")}</span><span>Status</span></div>`;
+function renderGroups(gs,tone){
+  return gs.map(g=>`<div class="fgrp"><span class="gn">${esc(g.name.toUpperCase())}</span><span class="gf">${esc(g.label)} · ${g.codes.length}</span></div>`+
     sortCodes(g.codes).map(c=>faultRow(c,g,tone)).join("")).join("");
-  return head+cols+body;
+}
+function panelFaults(tone){
+  const s=(view&&view.summary)||{};
+  if(tone==="active"){
+    const gs=groups(isActive);
+    const head=`<div class="phead"><span class="ptitle">Active faults</span><span class="psub">${s.active||0} failing now across ${gs.length} module${gs.length===1?"":"s"}</span></div>`;
+    if(!gs.length) return head+`<div class="empty">No active faults — nothing failing right now.</div>`;
+    return head+COLS+renderGroups(gs,"active");
+  }
+  // Historical: real stored faults shown; communication (network) codes split
+  // into a collapsed section, hidden by default — they re-accumulate as benign
+  // noise on a parked car and shouldn't read as 30 scary faults.
+  const gs=groups(isHistFault), commGs=groups(isComm);
+  const commCount=commGs.reduce((a,g)=>a+g.codes.length,0);
+  const histN=(s.historical||0)-(s.comm||0);
+  const head=`<div class="phead"><span class="ptitle">Historical faults</span><span class="psub">${histN} stored across ${gs.length} module${gs.length===1?"":"s"}</span></div>`;
+  if(!gs.length && !commGs.length) return head+`<div class="empty">No historical faults stored.</div>`;
+  let out=head;
+  if(gs.length) out+=COLS+renderGroups(gs,"historical");
+  else out+=`<div class="empty">No historical faults stored — only communication codes below.</div>`;
+  if(commGs.length){
+    out+=`<div class="fgrp commbar" style="cursor:pointer" onclick="toggleComm()"><span class="gn">${showComm?"▾":"▸"} COMMUNICATION</span><span class="gf">${commCount} network code${commCount===1?"":"s"} · a common occurrence, not a fault unless still active</span></div>`;
+    if(showComm) out+=(gs.length?"":COLS)+renderGroups(commGs,"comm");
+  }
+  return out;
 }
 function faultRow(c,g,tone){
   const fail=c.failing_now;
+  const pill=fail?`<span class="pill red">active</span>`
+    :(c.tier==="comm"?`<span class="pill gray">comm</span>`:`<span class="pill amber">history</span>`);
   return `<div class="frow" data-module="${esc(g.name)}" data-code="${esc(c.code)}">
     <div class="fsum" onclick="toggleRow(this.parentElement)">
       <span class="fcaret">▸</span>
       <span class="fcode mono">${esc(c.j2012||c.code)}</span>
       <span class="fdesc">${esc(c.description||"(no description)")}</span>
       <span class="fwhen mono">—</span>
-      <span class="pill ${fail?"red":"amber"}">${fail?"active":"history"}</span>
+      ${pill}
     </div>
     <div class="drill"><div class="di"><div class="dpanel">${drillHTML(c)}</div></div></div>
   </div>`;
 }
+function toggleComm(){ showComm=!showComm; renderPanel(); }
+window.toggleComm=toggleComm;
 function drillHTML(c){
   let h=`<div class="dsec"><h4>When it happened</h4><p class="occ">—</p></div>`;
   const meaning=c.subsystem||c.description;
@@ -525,7 +553,9 @@ MY ACTIVE FAULTS
 ${grp(c=>c.failing_now)||"(none)"}
 `;
   if(includeHist){
-    const h=grp(c=>!c.failing_now);
+    // Exclude comm-tier (network bus-timeout) codes — they're benign parked-car
+    // noise and shouldn't be sent to an AI as faults to research.
+    const h=grp(c=>!c.failing_now && c.tier!=="comm");
     if(h) p+=`\nPREVIOUSLY SEEN (historical — possibly already resolved; use only for pattern / root-cause context, NOT as active problems)\n${h}\n`;
   }
   p+=`
