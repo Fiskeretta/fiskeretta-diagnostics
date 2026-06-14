@@ -258,6 +258,7 @@ function showAbout(){
     <div style="font-weight:700;font-size:16px;margin-bottom:4px">Fiskeretta Diagnostics</div>
     <div style="font-size:12px;color:var(--dim);margin-bottom:14px">${appVersion?("Version "+esc(appVersion)+" · "):""}${cat}</div>
     <div class="cmsg" style="margin-bottom:14px">${DISCLAIMER_HTML}</div>
+    <div style="font-size:12px;color:var(--dim);margin-bottom:14px"><b style="color:var(--text)">Recommended adapter:</b> a genuine Vgate vLinker FD+ or OBDLink CX. Avoid cheap no-name “OBDII BLE” clones — their CAN error-frame handling is unreliable and can miss or corrupt codes.</div>
     <div style="font-size:11px;color:var(--dim);margin-bottom:16px">Built on protocol knowledge published by the Fisker Owners Association community (puddletools/CAN, puddletools/SaavyScripts).</div>
     <div class="cbtns"><button class="btn primary" id="aboutClose" style="width:auto">Close</button></div>
   </div>`;
@@ -287,7 +288,7 @@ function paintConn(){
   if(ob){
     if(!connected && !connecting){
       ob.style.display="flex";
-      ob.textContent="Not connected — plug the vLinker into the car's OBD2 port and switch the car to ON (Ready). Fiskeretta finds the dongle and connects automatically.";
+      ob.textContent="Not connected — plug the vLinker into the car's OBD2 port and switch the car to ON (Ready). Fiskeretta finds the dongle and connects automatically. Use a genuine Vgate vLinker FD+ or OBDLink CX — cheap no-name “OBDII BLE” clones have unreliable CAN error handling and may miss or corrupt codes.";
     } else { ob.style.display="none"; }
   }
   if(!view) renderPanel();  // keep the onboarding/empty-state hint in step with the live state
