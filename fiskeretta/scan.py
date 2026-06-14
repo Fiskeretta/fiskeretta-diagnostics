@@ -17,31 +17,31 @@ import sys
 from . import core
 
 
-def pick_device(devices: list):
-    hinted = core.best_guess(devices)
+def pick_device(pairs: list):
+    hinted = core.best_guess(pairs)
     if hinted:
         print(f"\nAuto-selecting likely match: {hinted.name} ({hinted.address})")
         return hinted
 
     if not sys.stdin.isatty():
-        return devices[0] if devices else None
+        return pairs[0][0] if pairs else None
 
-    for i, d in enumerate(devices):
+    for i, (d, _adv) in enumerate(pairs):
         print(f"  [{i}] {d.name or '(unnamed)'}  {d.address}")
     raw = input("\nEnter the index of the vLinker device: ").strip()
     try:
-        return devices[int(raw)]
+        return pairs[int(raw)][0]
     except (ValueError, IndexError):
         print("Invalid index.")
         return None
 
 
 async def main() -> None:
-    devices = await core.discover(log=print)
-    if not devices:
+    pairs = await core.discover(log=print)
+    if not pairs:
         return
 
-    device = pick_device(devices)
+    device = pick_device(pairs)
     if device is None:
         return
 

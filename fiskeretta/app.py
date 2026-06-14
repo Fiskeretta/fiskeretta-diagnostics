@@ -26,12 +26,20 @@ URL = f"http://{HOST}:{PORT}"
 
 
 def _icon_path() -> Optional[str]:
-    """Locate the app icon (PNG) in the dev tree or a PyInstaller bundle."""
+    """Locate the app icon for the current platform.
+
+    Windows' WinForms backend loads the icon via System.Drawing.Icon, which
+    accepts ONLY a real .ico — handing it a PNG throws "Argument 'picture' must
+    be a picture that can be used as a Icon" on the GUI thread and takes the whole
+    app down (the window dies and the UI reports "server connection lost"). So we
+    return a .ico on Windows and a PNG elsewhere, never the wrong format."""
     here = Path(__file__).resolve().parent
+    mei = Path(getattr(sys, "_MEIPASS", here))
+    name = "icon.ico" if sys.platform == "win32" else "icon_512.png"
     candidates = [
-        here.parent / "packaging" / "icon_512.png",          # dev tree
-        Path(getattr(sys, "_MEIPASS", here)) / "packaging" / "icon_512.png",  # frozen
-        here / "data" / "icon_512.png",
+        here.parent / "packaging" / name,   # dev tree
+        mei / "packaging" / name,            # frozen (if packaging/ is bundled)
+        here / "data" / name,                # frozen (collected under fiskeretta/data)
     ]
     for c in candidates:
         if c.is_file():

@@ -40,8 +40,8 @@ def _ssl_context() -> ssl.SSLContext:
 
 def _cache_get(vin: str) -> Optional[dict]:
     try:
-        return json.loads(_CACHE.read_text()).get(vin)
-    except (OSError, json.JSONDecodeError):
+        return json.loads(_CACHE.read_text(encoding="utf-8")).get(vin)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
 
@@ -51,11 +51,11 @@ def _cache_put(vin: str, data: dict) -> None:
         cache = {}
         if _CACHE.is_file():
             try:
-                cache = json.loads(_CACHE.read_text())
-            except json.JSONDecodeError:
+                cache = json.loads(_CACHE.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 cache = {}
         cache[vin] = data
-        _CACHE.write_text(json.dumps(cache, indent=2))
+        _CACHE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
     except OSError:
         pass
 

@@ -180,7 +180,7 @@
   .tool input{background:var(--surface-2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 8px;font-family:ui-monospace,monospace;font-size:12.5px}
 </style>
 </head>
-<body>
+<body data-version="__FK_VERSION__">
 <div class="app">
   <div class="top">
     <div class="conn"><span class="pulse" id="dot"></span><div><div class="dev" id="dev">Fiskeretta</div><div class="st" id="connText">starting…</div></div></div>
@@ -250,11 +250,12 @@ ws.onmessage=(e)=>{
   else if(m.type==="did_sweep"){ lastDidSweep=m; if(cur==="tools") renderPanel(); }
   else if(m.type==="export_result"){ m.ok?infoModal("History exported",`Saved to:<br><span class="mono" style="font-size:12px">${esc(m.path)}</span>`):infoModal("Export failed",esc(m.error||"Could not write the export.")); }
   else if(m.type==="import_result"){ m.ok?infoModal("History imported",`Added ${m.scans_added||0} scan${m.scans_added===1?"":"s"} and ${m.events_added||0} event${m.events_added===1?"":"s"}. Existing data was kept.`):infoModal("Import failed",esc(m.error||"That doesn't look like a Fiskeretta history export.")); }
+  else if(m.type==="device_picker") showDevicePicker(m.devices||[]);
 };
 
 function onConnection(m){
   connected=m.connected;
-  if(connected) connecting=false;
+  if(connected){ connecting=false; closeDevicePicker(); }
   $("dev").textContent=connected?"Vgate vLinker FD+":"Fiskeretta";
   if(connected) maybeAutoScan();
   paintConn(); paintRun();
@@ -263,16 +264,23 @@ function onConnection(m){
 // the disclaimer — never read the car before they click Continue. Connecting to
 // the dongle is allowed to happen while the disclaimer is still up.
 function maybeAutoScan(){
+  // A picker may have been deferred while the disclaimer was up — show it now.
+  if(accepted && pendingPicker){ const d=pendingPicker; pendingPicker=null; showDevicePicker(d); }
   if(!accepted || started || !connected) return;
   started=true;
   send("saved_scans");
   send("scan");
 }
 
-let appVersion="", catalogLoaded=false, catalogCount=0;
+// Seed the version from the server-injected body attribute so About/the footer
+// show it immediately, independent of the websocket. The "__"-guard keeps the
+// raw placeholder from leaking if the page is ever served without substitution.
+let appVersion=(()=>{ const v=document.body.dataset.version||""; return /^__.*__$/.test(v)?"":v; })();
+let catalogLoaded=false, catalogCount=0;
+function paintVersion(){ const v=$("ver"); if(v) v.textContent=appVersion?("v"+appVersion):""; }
 function onApp(m){
-  appVersion=m.version||""; catalogLoaded=!!m.catalog; catalogCount=m.catalog_count||0;
-  const v=$("ver"); if(v) v.textContent=appVersion?("v"+appVersion):"";
+  appVersion=m.version||appVersion; catalogLoaded=!!m.catalog; catalogCount=m.catalog_count||0;
+  paintVersion();
 }
 
 const DISCLAIMER_HTML=`Fiskeretta is a free, community-built diagnostic tool with <b style="color:var(--text)">no warranty of any kind</b>. It reads and clears diagnostic codes on your Fisker Ocean through the OBD2 port.<br><br>You use it <b style="color:var(--text)">entirely at your own risk</b>. The authors accept no responsibility for any damage, data loss, or consequences to your vehicle, adapter, or anything else arising from its use. Clearing codes permanently erases on-car diagnostic history. Only use the app while the vehicle is safely parked — never while driving.`;
@@ -385,6 +393,41 @@ function confirmAction(msg,onYes){
   document.body.appendChild(ov);
 }
 window.pickLive=pickLive; window.pickScan=pickScan; window.delScan=delScan; window.clearAllScans=clearAllScans; window.confirmAction=confirmAction;
+
+/* ---- device picker (shown when the dongle can't be auto-identified) ---- */
+let devPickerEl=null, pendingPicker=null;
+function showDevicePicker(devices){
+  // Don't pop the picker over the first-run disclaimer — stash it until accepted.
+  if(!accepted){ pendingPicker=devices; return; }
+  if(devPickerEl) devPickerEl.remove();
+  const rows = devices.length ? devices.map(d=>{
+    const name=d.name||"(unnamed device)";
+    const rssi=(d.rssi!=null)?`${d.rssi} dBm`:"";
+    const likely=d.likely?`<span class="pill green" style="margin-left:8px">likely</span>`:"";
+    return `<div class="clrow dpick" data-addr="${esc(d.address)}" data-name="${esc(d.name||"")}" style="cursor:pointer">
+      <span class="cln">${esc(name)}${likely}<div class="mono" style="font-size:11px;color:var(--faint);margin-top:2px">${esc(d.address)}</div></span>
+      <span class="lf mono">${esc(rssi)}</span></div>`;
+  }).join("") : `<div class="empty">No Bluetooth devices found. Make sure the vLinker is plugged into the OBD2 port, the car is awake (ON/Ready), and Bluetooth is on — then Rescan.</div>`;
+  const ov=document.createElement("div"); ov.className="cov"; ov.style.zIndex="550";
+  ov.innerHTML=`<div class="cbox" style="max-width:470px">
+    <div style="font-weight:700;font-size:16px;margin-bottom:6px">Select your OBD2 adapter</div>
+    <div style="font-size:12.5px;color:var(--dim);margin-bottom:14px">Fiskeretta couldn't identify the vLinker automatically (common on Windows, where the adapter's name isn't always broadcast). Pick it from the Bluetooth devices found below — it usually has a strong signal and may be tagged "likely". Your choice is remembered for next time.</div>
+    <div id="devList" style="max-height:46vh;overflow-y:auto;margin-bottom:12px">${rows}</div>
+    <div id="devStatus" style="font-size:12px;color:var(--dim);min-height:16px;margin-bottom:12px"></div>
+    <div class="cbtns"><button class="btn ghost" id="devRescan" style="width:auto">Rescan</button><button class="btn ghost" id="devClose" style="width:auto">Cancel</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  devPickerEl=ov;
+  ov.querySelectorAll(".dpick").forEach(r=>r.onclick=()=>{
+    const addr=r.dataset.addr, name=r.dataset.name;
+    $("devStatus").textContent=`Connecting to ${name||addr}…`;
+    sendMsg({command:"connect_device", address:addr, name:name});
+  });
+  ov.querySelector("#devRescan").onclick=()=>{ $("devStatus").textContent="Rescanning…"; send("connect"); };
+  ov.querySelector("#devClose").onclick=()=>closeDevicePicker();
+}
+function closeDevicePicker(){ if(devPickerEl){ devPickerEl.remove(); devPickerEl=null; } pendingPicker=null; }
+window.showDevicePicker=showDevicePicker; window.closeDevicePicker=closeDevicePicker;
 
 /* ---- sidebar ---- */
 function tierCounts(){
@@ -817,7 +860,7 @@ window.addEventListener("scroll",()=>{ tipEl=null; tip.classList.remove("show");
   ov.querySelector("#discOk").onclick=()=>{ try{ localStorage.setItem("fk_disclaimer","1"); }catch(e){} ov.remove(); accepted=true; maybeAutoScan(); };
 })();
 
-renderNav(); renderPanel();
+renderNav(); renderPanel(); paintVersion();
 </script>
 </body>
 </html>
