@@ -66,3 +66,43 @@ def test_recovery_flow_keys_are_real_scan_targets():
     for flow_key, (label, steps) in server.RECOVERY_FLOWS.items():
         for key, hard in steps:
             assert key in targets, f"recovery flow '{flow_key}' references unknown module '{key}'"
+
+
+def test_routine_control_start_ok_and_results():
+    # start: 0x71 <sub> <RID hi/lo>, no data
+    s = FakeSession({"31010203": "71 01 02 03"})
+    ok, data, msg = asyncio.run(uds.routine_control(s, 0x746, 0x74E, 0x0203, sub=0x01))
+    assert ok is True and data == b""
+    # requestResults: data is everything after 71 <sub> <RID hi/lo>
+    s = FakeSession({"31030203": "71 03 02 03 AA BB"})
+    ok, data, _ = asyncio.run(uds.routine_control(s, 0x746, 0x74E, 0x0203, sub=0x03))
+    assert ok is True and data == bytes([0xAA, 0xBB])
+
+
+def test_routine_control_security_access_aborts_not_unlocks():
+    s = FakeSession({"31010203": "7F 31 33"})  # NRC 0x33 securityAccessDenied
+    ok, data, msg = asyncio.run(uds.routine_control(s, 0x746, 0x74E, 0x0203, sub=0x01))
+    assert ok is False and "0x33" in msg
+    # never tried to unlock (no 0x27 SecurityAccess request sent)
+    assert not any(c.startswith("27") for c in s.sent)
+
+
+def test_routine_control_not_supported_and_pending():
+    s = FakeSession({"31010999": "7F 31 31"})  # requestOutOfRange
+    ok, _, msg = asyncio.run(uds.routine_control(s, 0x7C6, 0x7CE, 0x0999, sub=0x01))
+    assert ok is False and "0x31" in msg
+
+    s = FakeSession({"31010203": ["7F 31 78", "71 01 02 03"]})  # pending then ok
+    ok, _, _ = asyncio.run(uds.routine_control(s, 0x746, 0x74E, 0x0203, sub=0x01))
+    assert ok is True
+
+
+def test_enumerate_routines_skips_out_of_range():
+    s = FakeSession({
+        "31030201": "71 03 02 01 00",   # exists (results)
+        "31030202": "7F 31 31",          # requestOutOfRange -> absent
+        "31030203": "7F 31 24",          # present (sequence error)
+    })
+    found = asyncio.run(uds.enumerate_routines(s, 0x746, 0x74E, [0x0201, 0x0202, 0x0203]))
+    rids = {f["rid"] for f in found}
+    assert rids == {"0201", "0203"}

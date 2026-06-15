@@ -447,6 +447,80 @@ async def read_identification(session: ElmSession, request_id: int, response_id:
     return out
 
 
+async def routine_control(session: ElmSession, request_id: int, response_id: int,
+                          rid: int, sub: int = 0x01, params: bytes = b"",
+                          log: Optional[Log] = None, attempts: int = 8) -> tuple:
+    """UDS 0x31 RoutineControl. sub = 0x01 startRoutine / 0x02 stopRoutine /
+    0x03 requestRoutineResults. Returns (ok, data, message).
+
+    DANGER: with sub 0x01 this ACTUATES hardware for many RIDs (parking brake,
+    windows, …). Callers MUST gate it to a parked car + an explicit user confirm —
+    this primitive does not self-gate. It never attempts SecurityAccess: a 0x33
+    rejection is reported and aborted, not unlocked. 0x78 (responsePending) is an
+    ACK; we wait and re-read. Never raises."""
+    await configure_addressing(session, request_id, response_id, log)
+    request = f"31{sub:02X}{rid:04X}{params.hex().upper()}"
+    last = "no response"
+    for _ in range(attempts):
+        try:
+            reply = await session.send(request, timeout=10.0)
+        except asyncio.TimeoutError:
+            last = "timeout"
+            continue
+        up = reply.upper()
+        payload = _extract_payload_bytes(reply)
+        if payload and payload[0] == 0x31 + POSITIVE_RESPONSE_OFFSET:  # 0x71 routineControl ok
+            data = bytes(payload[4:]) if len(payload) >= 4 else b""    # after 71 <sub> <RID hi/lo>
+            return True, data, "ok"
+        if len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x31:
+            nrc = payload[2]
+            if nrc == 0x78:                 # responsePending — ACK, routine running
+                last = "pending"
+                await asyncio.sleep(0.5)
+                continue
+            if nrc == 0x33:
+                return False, b"", "SecurityAccess required (NRC 0x33) — not supported"
+            if nrc == 0x31:
+                return False, b"", "routine not supported on this ECU (NRC 0x31)"
+            if nrc == 0x22:
+                return False, b"", "conditions not correct (NRC 0x22) — e.g. car not in the required state"
+            return False, b"", f"rejected (NRC 0x{nrc:02X})"
+        if any(err in up for err in _ADAPTER_ERRORS):
+            last = f"adapter: {reply.strip()!r}"
+            await asyncio.sleep(0.3)
+            continue
+        return False, b"", f"unexpected: {payload.hex() if payload else reply.strip()!r}"
+    return False, b"", last
+
+
+async def enumerate_routines(session: ElmSession, request_id: int, response_id: int,
+                             rids, log: Optional[Log] = None) -> list:
+    """Phase-A, READ-ONLY routine discovery: probe each RID with
+    requestRoutineResults (0x31 sub 0x03) — which reads status and never starts a
+    routine — and classify by reply. A RID that answers 0x71, or rejects with
+    anything other than 0x31 (requestOutOfRange), is taken to exist. Returns
+    [{rid, note}]. Lets us find real RIDs on the car before wiring any actuation,
+    instead of hard-coding guesses."""
+    await configure_addressing(session, request_id, response_id, log)
+    found = []
+    for rid in rids:
+        try:
+            reply = await session.send(f"3103{rid:04X}", timeout=4.0)
+        except asyncio.TimeoutError:
+            continue
+        payload = _extract_payload_bytes(reply)
+        if payload and payload[0] == 0x31 + POSITIVE_RESPONSE_OFFSET:
+            found.append({"rid": f"{rid:04X}", "note": "results returned (0x71)"})
+        elif len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x31:
+            nrc = payload[2]
+            if nrc == 0x31:     # requestOutOfRange — RID genuinely absent
+                continue
+            found.append({"rid": f"{rid:04X}", "note": f"present (NRC 0x{nrc:02X})"})
+        if log:
+            log(f"  RID {rid:04X}: {reply.strip()!r}")
+    return found
+
+
 async def clear_dtcs(session: ElmSession, request_id: int, response_id: int,
                      log: Optional[Log] = None, attempts: int = 6) -> tuple:
     """UDS 0x14 ClearDiagnosticInformation for all DTC groups (0xFFFFFF) on one
