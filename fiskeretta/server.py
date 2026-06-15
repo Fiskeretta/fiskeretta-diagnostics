@@ -515,8 +515,15 @@ async def run_functional(log) -> None:
 
 
 async def run_generic_obd(ws, log) -> None:
-    """Probe for legislated generic OBD (J1979) to confirm the car is UDS-only."""
+    """Probe for legislated generic OBD (SAE J1979) and record what answers.
+
+    The Ocean does expose a minimal J1979 surface (ECU 0x7CA answers modes
+    01/03/09 with a tiny PID set and a masked VIN) — it is NOT UDS-only. Persist
+    the result so the finding survives a crash; it's otherwise UI-only."""
     result = await _manager.run(lambda s: uds.probe_generic_obd(s, log))
+    path = storage.save_generic_obd(result)
+    if path:
+        log(f"Saved generic-OBD probe to {path}")
     if not ws.closed:
         await ws.send_json({"type": "generic_obd", **result})
 

@@ -138,7 +138,7 @@ def save_bms_dids(data: dict) -> Optional[Path]:
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         path = CONFIG_DIR / "bms_dids.json"
         payload = {"swept_at": datetime.now(timezone.utc).isoformat(), **data}
-        path.write_text(json.dumps(payload, indent=2))
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         return path
     except OSError:
         return None
@@ -146,8 +146,29 @@ def save_bms_dids(data: dict) -> Optional[Path]:
 
 def load_bms_dids() -> Optional[dict]:
     try:
-        return json.loads((CONFIG_DIR / "bms_dids.json").read_text())
-    except (OSError, json.JSONDecodeError):
+        return json.loads((CONFIG_DIR / "bms_dids.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+
+
+def save_generic_obd(data: dict) -> Optional[Path]:
+    """Persist the latest generic-OBD (SAE J1979) probe result (generic_obd.json),
+    so the finding survives a crash / app restart — it's otherwise only streamed
+    to the UI and lost when the window closes."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        path = CONFIG_DIR / "generic_obd.json"
+        payload = {"probed_at": datetime.now(timezone.utc).isoformat(), **data}
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return path
+    except OSError:
+        return None
+
+
+def load_generic_obd() -> Optional[dict]:
+    try:
+        return json.loads((CONFIG_DIR / "generic_obd.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return None
 
 
@@ -178,7 +199,7 @@ def _is_safe_member(name: str) -> bool:
     if name.endswith("/") or Path(name).is_absolute() or ".." in Path(name).parts:
         return False
     return (name == "events.jsonl"
-            or name in ("discovery.json", "bms_dids.json")
+            or name in ("discovery.json", "bms_dids.json", "generic_obd.json")
             or (name.startswith("scans/") and name.endswith(".json")))
 
 

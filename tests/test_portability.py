@@ -27,11 +27,26 @@ def test_is_safe_member_guards_zip_slip():
     assert storage._is_safe_member("scans/scan-1.json")
     assert storage._is_safe_member("events.jsonl")
     assert storage._is_safe_member("bms_dids.json")
+    assert storage._is_safe_member("generic_obd.json")
     assert not storage._is_safe_member("../etc/passwd")
     assert not storage._is_safe_member("scans/../../x.json")
     assert not storage._is_safe_member("/abs/path.json")
     assert not storage._is_safe_member("random.txt")
     assert not storage._is_safe_member("scans/")
+
+
+def test_save_load_generic_obd_roundtrip(tmp_path, monkeypatch):
+    _point_storage_at(monkeypatch, tmp_path / "cfg")
+    assert storage.load_generic_obd() is None  # nothing saved yet
+    data = {"generic_obd": True,
+            "probes": [{"request": "0100", "label": "modes supported",
+                        "answered": True, "reply": "7CA 06 41 00 80 00 00 03"}]}
+    path = storage.save_generic_obd(data)
+    assert path is not None and path.is_file()
+    loaded = storage.load_generic_obd()
+    assert loaded["generic_obd"] is True
+    assert loaded["probes"][0]["request"] == "0100"
+    assert "probed_at" in loaded  # timestamp stamped on save
 
 
 def test_migrate_legacy_dir_copies_then_removes(tmp_path, monkeypatch):

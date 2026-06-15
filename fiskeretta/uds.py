@@ -898,7 +898,9 @@ def _obd_answered(reply: str, mode: int) -> bool:
 
 async def probe_generic_obd(session: ElmSession, log: Optional[Log] = None) -> dict:
     """Ask the legislated OBD-II functional address 0x7DF for standard emissions
-    data, to confirm whether the Ocean exposes any generic OBD or is UDS-only.
+    data, and record which ECUs answer. The Ocean is NOT UDS-only: ECU 0x7CA
+    answers modes 01/03/09 with a minimal PID set (PIDs 01/1F/20), MIL off / 0
+    DTCs, and a masked VIN (0x3F filler) — the real VIN only comes via UDS F190.
     Returns {"generic_obd": bool, "probes": [{request, label, answered, reply}]}.
     """
     if log:
@@ -927,8 +929,8 @@ async def probe_generic_obd(session: ElmSession, log: Optional[Log] = None) -> d
                 pass
     generic = any(r["answered"] for r in results)
     if log:
-        log("Generic OBD present — the car answered a legislated mode."
-            if generic else "No generic OBD — the Ocean is UDS-only (as expected).")
+        log("Generic OBD present — the car answered a legislated mode (expected on the Ocean, via 0x7CA)."
+            if generic else "No legislated mode answered this time — the Ocean normally responds via 0x7CA; is the car awake (ON/Ready)?")
     return {"generic_obd": generic, "probes": results}
 
 
