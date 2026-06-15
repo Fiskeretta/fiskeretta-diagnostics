@@ -97,6 +97,20 @@ def test_routine_control_not_supported_and_pending():
     assert ok is True
 
 
+def test_routine_audit_records_timestamped_row(tmp_path, monkeypatch):
+    import json
+    from fiskeretta import storage
+    monkeypatch.setattr(storage, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(storage, "ROUTINE_AUDIT_FILE", tmp_path / "routine_audit.jsonl")
+    storage.record_routine_audit({"kind": "reset", "label": "VCU", "ok": True})
+    storage.record_routine_audit({"kind": "routine", "rid": "0205", "ok": False, "result": "NRC 0x33"})
+    rows = [json.loads(l) for l in (tmp_path / "routine_audit.jsonl").read_text().splitlines()]
+    assert len(rows) == 2
+    assert rows[0]["kind"] == "reset" and rows[0]["ok"] is True and "when" in rows[0]
+    assert rows[1]["rid"] == "0205" and "0x33" in rows[1]["result"]
+    assert storage._is_safe_member("routine_audit.jsonl")  # included in export/import
+
+
 def test_enumerate_routines_skips_out_of_range():
     s = FakeSession({
         "31030201": "71 03 02 01 00",   # exists (results)

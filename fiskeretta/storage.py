@@ -16,6 +16,20 @@ from typing import Optional
 from .paths import CONFIG_DIR, LEGACY_CONFIG_DIR, SCANS_DIR
 
 EVENTS_FILE = CONFIG_DIR / "events.jsonl"
+ROUTINE_AUDIT_FILE = CONFIG_DIR / "routine_audit.jsonl"
+
+
+def record_routine_audit(entry: dict) -> None:
+    """Append one routine/reset attempt to routine_audit.jsonl, timestamped here.
+    Every ECU reset and 0x31 RoutineControl (incl. actuation) lands a row, so there's
+    a trail of what was sent to the car. Best-effort; never raises."""
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        row = {"when": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f+00:00"), **entry}
+        with ROUTINE_AUDIT_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(row) + "\n")
+    except OSError:
+        pass
 
 
 def save_scan(result: dict) -> Optional[Path]:
@@ -198,7 +212,7 @@ def _is_safe_member(name: str) -> bool:
     (guards against zip-slip / arbitrary-file extraction)."""
     if name.endswith("/") or Path(name).is_absolute() or ".." in Path(name).parts:
         return False
-    return (name == "events.jsonl"
+    return (name in ("events.jsonl", "routine_audit.jsonl")
             or name in ("discovery.json", "bms_dids.json", "generic_obd.json")
             or (name.startswith("scans/") and name.endswith(".json")))
 

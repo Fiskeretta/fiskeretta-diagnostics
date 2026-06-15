@@ -251,6 +251,9 @@ ws.onmessage=(e)=>{
   else if(m.type==="reset_result"){ infoModal(esc(m.label)+" — reset", (m.ok?"✓ ":"✗ ")+esc(m.msg)); }
   else if(m.type==="recovery_result"){ const rows=(m.results||[]).map(r=>`${r.ok?"✓":"✗"} ${esc(r.label)} — ${esc(r.msg)}`).join("<br>"); infoModal("Recovery — "+esc(m.label), rows||"(no steps)"); }
   else if(m.type==="ecu_info"){ const info=m.info||{}; const ks=Object.keys(info); const rows=ks.length?ks.map(k=>`<div style="padding:2px 0"><span style="color:var(--faint)">${esc(k)}</span> <span class="mono">${esc(info[k])}</span></div>`).join(""):`<span style="color:var(--faint)">No identification DIDs answered.</span>`; infoModal(esc(m.label)+" — identification", rows); }
+  else if(m.type==="did_value"){ let v; if(!m.ok){ v=`<span style="color:var(--amber)">error: ${esc(m.raw)}</span>`; } else if(!m.raw){ v="(empty)"; } else if(m.ascii&&/[A-Za-z0-9]/.test(m.ascii)&&m.raw.length>2){ v=`<span class="mono">${esc(m.ascii)}</span>`; } else { v=`<span class="mono">0x${esc(m.raw)}</span> (${parseInt(m.raw,16)})`; } infoModal(esc(m.name), `${v}<div style="font-size:11px;color:var(--faint);margin-top:6px">DID 0x${esc(m.did)}</div>`); }
+  else if(m.type==="routines_found"){ const f=m.found||[]; const rows=f.length?f.map(r=>`<div style="padding:2px 0"><span class="mono">0x${esc(r.rid)}</span> <span style="color:var(--faint)">${esc(r.note)}</span></div>`).join(""):"No routines responded in that range."; infoModal(`Routines on ${esc(m.label)} · 0x${esc(m.start)}–0x${esc(m.end)}`, rows); }
+  else if(m.type==="routine_result"){ infoModal(esc(m.name), (m.ok?"✓ ":"✗ ")+esc(m.msg)+(m.data?` · <span class="mono">${esc(m.data)}</span>`:"")); }
   else if(m.type==="export_result"){ m.ok?infoModal("History exported",`Saved to:<br><span class="mono" style="font-size:12px">${esc(m.path)}</span>`):infoModal("Export failed",esc(m.error||"Could not write the export.")); }
   else if(m.type==="import_result"){ m.ok?infoModal("History imported",`Added ${m.scans_added||0} scan${m.scans_added===1?"":"s"} and ${m.events_added||0} event${m.events_added===1?"":"s"}. Existing data was kept.`):infoModal("Import failed",esc(m.error||"That doesn't look like a Fiskeretta history export.")); }
   else if(m.type==="device_picker") showDevicePicker(m.devices||[]);
@@ -659,6 +662,7 @@ function panelTools(){
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for generic OBD</div><div class="td">The Ocean speaks manufacturer UDS, not the legislated emissions OBD-II that off-the-shelf scanners rely on — which is why a generic scanner shows almost nothing. This sends the standard OBD-II requests (modes 01 / 09 / 03) to 0x7DF to confirm whether the car answers any of them. Safe; a couple of seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="startGenericObd()" data-tip="Send legislated OBD-II requests on 0x7DF to see if the car answers">Run probe</button></div>${genericObdResult()}</div></div>`;
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Battery / live-data sweep <span style="font-size:11px;color:var(--faint)">(experimental)</span></div><div class="td">Walks UDS 0x22 data identifiers on the BMS (0x7E1) and lists which respond, with their raw bytes — the groundwork for reading HV state of charge, state of health, cell voltages and temperatures. No public DID list exists for the Ocean, so this discovers them; decoded names show for DIDs we've confirmed. One request per DID, so large ranges are slow — start narrow. Read-only and safe.</div><div class="toolbtns" style="margin-top:10px;align-items:center"><span style="font-size:12px;color:var(--faint)">DIDs (hex)</span><input id="didStart" value="${esc(didRange.start)}" style="width:60px" data-tip="Start DID (hex)"><span style="color:var(--faint)">–</span><input id="didEnd" value="${esc(didRange.end)}" style="width:60px" data-tip="End DID (hex)"><button class="btn ghost" ${gate()} onclick="startBmsSweep()" data-tip="Read every DID in the range from the BMS and list the responders">Sweep</button></div>${didSweepResult()}</div></div>`;
   h+=ecuToolsCard();
+  h+=routinesCard();
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Data &amp; history</div><div class="td">Your scans and history live in a folder on this computer and survive app updates. Export bundles them into one zip you can back up or move to another machine; import merges a zip back in without overwriting newer data. No connection needed.</div><div class="toolbtns" style="margin-top:10px;gap:8px"><button class="btn ghost" onclick="exportHistory()" data-tip="Save all scans + history to a zip on your Desktop">Export</button><button class="btn ghost" onclick="importHistory()" data-tip="Merge a previously exported history zip">Import</button><button class="btn ghost" onclick="revealFolder()" data-tip="Open the data folder in Finder / Explorer">Reveal data folder</button></div></div></div>`;
   return h;
 }
@@ -689,6 +693,29 @@ function ecuReset(hard){
 }
 function readEcuInfo(){ if(!connected||busy) return; const e=_ecuSel(); if(e) sendMsg({command:"read_identification",module:e.key}); }
 window.runRecovery=runRecovery;window.ecuReset=ecuReset;window.readEcuInfo=readEcuInfo;
+function _ecuOptions(){
+  const mods=((view&&view.modules)||[]).filter(m=>m.status!=="not_reached");
+  return mods.length?mods.map(m=>`<option value="${esc(m.name)}">${esc(m.label)} (${esc(m.name)})</option>`).join(""):`<option value="">— run a scan first —</option>`;
+}
+function routinesCard(){
+  return `<div class="tool"><div style="flex:1"><div class="ti">Service routines <span style="font-size:11px;color:var(--faint)">(advanced · parked car only)</span></div>`+
+    `<div class="td">Reads are safe. A routine's <b>Start</b> can <b style="color:var(--text)">actuate hardware</b> (parking brake, windows, …) — those need a parked car and a confirm, and every run is logged to an audit trail. No public list of Fisker routine IDs exists yet, so <b>find them read-only first</b>, then run by ID. No SecurityAccess, coding, or OTA.</div>`+
+    `<div class="toolbtns" style="margin-top:10px;gap:8px;flex-wrap:wrap"><button class="btn ghost" ${gate()} onclick="readCount('F403','FOBs synced')" data-tip="PKC 0x22 F403">Read FOBs synced</button><button class="btn ghost" ${gate()} onclick="readCount('F888','NFC cards synced')" data-tip="PKC 0x22 F888">Read NFC cards</button></div>`+
+    `<div class="toolbtns" style="margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap"><select id="rtEcu" style="max-width:210px">${_ecuOptions()}</select><span style="font-size:12px;color:var(--faint)">RIDs</span><input id="rtStart" value="0200" style="width:60px" data-tip="Start RID (hex)"><span style="color:var(--faint)">–</span><input id="rtEnd" value="02FF" style="width:60px" data-tip="End RID (hex)"><button class="btn ghost" ${gate()} onclick="findRoutines()" data-tip="Read-only probe (0x31 sub 0x03) — never starts a routine">Find routines</button></div>`+
+    `<div class="toolbtns" style="margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap"><input id="rtRid" placeholder="RID hex" style="width:80px"><select id="rtSub"><option value="3">Read results</option><option value="2">Stop</option><option value="1">Start (actuates!)</option></select><input id="rtParams" placeholder="params hex (optional)" style="width:130px"><button class="btn ghost" ${gate()} onclick="runRoutine()" data-tip="Run 0x31 with the chosen subfunction — Start can move hardware">Run routine</button></div></div></div>`;
+}
+function readCount(did,name){ if(!connected||busy) return; sendMsg({command:"read_did",module:"pkc",did:did,name:name}); }
+function findRoutines(){ if(!connected||busy) return; const e=$("rtEcu"); if(!e||!e.value) return; sendMsg({command:"enumerate_routines",module:e.value,start:($("rtStart").value||"0200").trim(),end:($("rtEnd").value||"02FF").trim()}); }
+function runRoutine(){
+  if(!connected||busy) return;
+  const e=$("rtEcu"), rid=($("rtRid").value||"").trim(), sub=$("rtSub").value, params=($("rtParams").value||"").trim();
+  if(!e||!e.value||!rid) return;
+  const label=e.options[e.selectedIndex].text;
+  const go=()=>sendMsg({command:"routine",module:e.value,rid:rid,sub:parseInt(sub),params:params,name:`RID 0x${rid.toUpperCase()}`});
+  if(sub==="1") confirmAction(`Start routine 0x${rid.toUpperCase()} on ${label}? This can ACTUATE hardware — only with the car parked and safe. The attempt is logged.`,go,"Run (actuate)","danger");
+  else go();
+}
+window.readCount=readCount;window.findRoutines=findRoutines;window.runRoutine=runRoutine;
 function exportHistory(){ sendMsg({command:"export_history"}); }
 function revealFolder(){ sendMsg({command:"reveal_folder"}); }
 function importHistory(){

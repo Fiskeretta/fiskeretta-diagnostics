@@ -208,6 +208,9 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
         "ecu_reset": (lambda: run_ecu_reset(ws, log, payload.get("module"), bool(payload.get("hard"))), "running"),
         "recovery_flow": (lambda: run_recovery_flow(ws, log, payload.get("flow")), "running"),
         "read_identification": (lambda: run_read_identification(ws, log, payload.get("module")), "running"),
+        "routine": (lambda: run_routine(ws, log, payload), "running"),
+        "enumerate_routines": (lambda: run_enumerate_routines(ws, log, payload), "running"),
+        "read_did": (lambda: run_read_did(ws, log, payload), "running"),
     }
     entry = long_ops.get(command)
     if entry:
@@ -591,6 +594,8 @@ async def run_ecu_reset(ws, log, module_key, hard: bool) -> None:
     log(f"{'Hard' if hard else 'Soft'} reset {t['label']} (0x{t['request']:03X})…")
     ok, msg = await _manager.run(
         lambda s: uds.ecu_reset(s, t["request"], t["response"], hard=hard, log=log))
+    storage.record_routine_audit({"kind": "reset", "module": module_key, "label": t["label"],
+                                  "hard": hard, "ok": ok, "result": msg})
     log(f"  {t['label']}: {msg}")
     if not ws.closed:
         await ws.send_json({"type": "reset_result", "module": module_key,
@@ -641,6 +646,91 @@ async def run_read_identification(ws, log, module_key) -> None:
     if not ws.closed:
         await ws.send_json({"type": "ecu_info", "module": module_key,
                             "label": t["label"], "info": info})
+
+
+async def run_routine(ws, log, payload) -> None:
+    """Generic, audited UDS 0x31 RoutineControl runner. The UI owns the parked-car
+    confirm (this is the actuation path); we audit every attempt and never attempt
+    SecurityAccess. `name`/`hazard` are passthrough labels for the audit + result."""
+    module = payload.get("module")
+    try:
+        rid = int(str(payload.get("rid")), 16)
+    except (TypeError, ValueError):
+        log("Bad routine id.")
+        return
+    sub = int(payload.get("sub", 1))
+    try:
+        params = bytes.fromhex(payload.get("params", "") or "")
+    except ValueError:
+        log("Bad routine params (hex).")
+        return
+    name = payload.get("name") or f"RID 0x{rid:04X}"
+    t = registry.scan_targets().get(module)
+    if not t or not t.get("response"):
+        log(f"Unknown module '{module}'.")
+        return
+    log(f"Routine — {name} on {t['label']} (0x31 sub {sub:02X}, RID 0x{rid:04X})…")
+    ok, data, msg = await _manager.run(
+        lambda s: uds.routine_control(s, t["request"], t["response"], rid, sub=sub, params=params, log=log))
+    storage.record_routine_audit({"kind": "routine", "module": module, "name": name,
+                                  "rid": f"{rid:04X}", "sub": sub, "params": params.hex().upper(),
+                                  "ok": ok, "result": msg, "data": data.hex().upper()})
+    log(f"  {name}: {msg}" + (f" [{data.hex().upper()}]" if data else ""))
+    if not ws.closed:
+        await ws.send_json({"type": "routine_result", "module": module, "name": name,
+                            "ok": ok, "msg": msg, "data": data.hex().upper()})
+
+
+async def run_enumerate_routines(ws, log, payload) -> None:
+    """Read-only Phase-A RID discovery on one ECU over a (capped) range."""
+    module = payload.get("module")
+    try:
+        start = int(str(payload.get("start", "0200")), 16)
+        end = int(str(payload.get("end", "02FF")), 16)
+    except (TypeError, ValueError):
+        log("Bad RID range — use hex like 0200.")
+        return
+    if end < start:
+        start, end = end, start
+    end = min(end, start + 1023)  # cap one pass at 1024 RIDs
+    t = registry.scan_targets().get(module)
+    if not t or not t.get("response"):
+        log(f"Unknown module '{module}'.")
+        return
+    log(f"Enumerating routines 0x{start:04X}–0x{end:04X} on {t['label']} (read-only)…")
+    found = await _manager.run(
+        lambda s: uds.enumerate_routines(s, t["request"], t["response"], range(start, end + 1), log))
+    log(f"  {len(found)} candidate routine(s) present.")
+    if not ws.closed:
+        await ws.send_json({"type": "routines_found", "module": module, "label": t["label"],
+                            "start": f"{start:04X}", "end": f"{end:04X}", "found": found})
+
+
+async def run_read_did(ws, log, payload) -> None:
+    """Read one UDS 0x22 DID from an ECU (raw + ASCII). Powers the read routines."""
+    module = payload.get("module")
+    try:
+        did = int(str(payload.get("did")), 16)
+    except (TypeError, ValueError):
+        log("Bad DID.")
+        return
+    t = registry.scan_targets().get(module)
+    if not t or not t.get("response"):
+        log(f"Unknown module '{module}'.")
+        return
+    name = payload.get("name") or f"DID 0x{did:04X}"
+    log(f"Reading {name} from {t['label']} (0x22 {did:04X})…")
+    raw = ascii_ = ""
+    ok = True
+    try:
+        data = await _manager.run(
+            lambda s: uds.read_data_by_identifier(s, t["request"], t["response"], did, log))
+        raw, ascii_ = data.hex().upper(), uds._decode_ascii(data)
+    except Exception as exc:
+        ok, raw = False, str(exc)
+    if not ws.closed:
+        await ws.send_json({"type": "did_value", "module": module, "name": name,
+                            "did": f"{did:04X}", "ok": ok, "raw": raw, "ascii": ascii_})
 
 
 async def run_monitor(ws, log, seconds: int = 10) -> None:
