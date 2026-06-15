@@ -46,6 +46,18 @@ FRIENDLY = {
     "trm": "Thermal Regulation Module",
     "mfss": "Multi-Function Steering Switch",
     "cim": "Column Integration Module",
+    # Radar set: front mid-range (mrr, above) + four corner radars (CMRR),
+    # all coordinated by the ADAS domain controller the DTC catalog calls "Hydra3".
+    "hydra": "ADAS Domain Controller (Hydra3)",
+    "cmrr_fr": "Corner Radar, Front Right",
+    "cmrr_fl": "Corner Radar, Front Left",
+    "cmrr_rl": "Corner Radar, Rear Left",
+    "cmrr_rr": "Corner Radar, Rear Right",
+    "gw_phys": "Central Gateway (physical)",
+    "tbox_eu": "Telematics Control Unit (EU)",
+    "tbox_us": "Telematics Control Unit (US)",
+    "eps1": "Electric Power Steering 1",
+    # WTC / BTC: addresses confirmed (0x752 / 0x7D5), acronym expansions unverified.
 }
 
 # Documented in the DTC manual but not yet reached by discovery (just keys —

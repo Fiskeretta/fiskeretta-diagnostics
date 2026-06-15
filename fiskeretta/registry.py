@@ -29,14 +29,17 @@ def _norm(name: str) -> str:
 
 def _discovered_ecus() -> list:
     """The catalogued 11-bit ECUs: the baked canonical map (knowns.KNOWN_ECUS)
-    as the baseline, plus anything this install has found at runtime
-    (discovery.json) layered on top. So a fresh install scans the full known set
-    out of the box; runtime finds augment/override by request id. 29-bit finds
-    stay out of the scan path (the DTC reader addresses on 11-bit protocol 6)."""
+    plus anything this install has found at runtime (discovery.json). A fresh
+    install scans the full known set out of the box. The baked map is layered
+    LAST so it WINS for any address it defines: runtime labels come from
+    DTC-section heuristics (less reliable than the hand-verified baked map), so
+    they only ADD addresses the baked map lacks — they never relabel one it
+    already curates. 29-bit finds stay out of the scan path (the DTC reader
+    addresses on 11-bit protocol 6)."""
     data = storage.load_discovery()
     runtime = data.get("ecus", []) if data else []
     by_req: dict = {}
-    for ecu in list(KNOWN_ECUS) + runtime:  # runtime layered last → wins
+    for ecu in runtime + list(KNOWN_ECUS):  # baked map layered last → curated names win
         if ecu.get("addressing") == "29bit":
             continue
         req = ecu.get("request_id")

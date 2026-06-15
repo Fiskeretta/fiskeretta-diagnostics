@@ -25,7 +25,8 @@ from .core import ElmSession, Log
 MODULES = {
     "gateway": (0x7C2, 0x7CA),
     "pkc":     (0x7A2, 0x7AA),
-    "icc":     (0x781, 0x789),
+    "mrr":     (0x781, 0x789),  # front mid-range radar — was mislabeled "icc";
+                                # the infotainment ICC is 0x7B1 (knowns.py).
     "bcm":     (0x7C1, 0x7C9),
     "acu":     (0x7A0, 0x7A8),
     "esp":     (0x7D0, 0x7D8),
