@@ -248,6 +248,9 @@ ws.onmessage=(e)=>{
   else if(m.type==="code_history"){ onCodeHistory(m); }
   else if(m.type==="generic_obd"){ lastGenericObd=m; if(cur==="tools") renderPanel(); }
   else if(m.type==="did_sweep"){ lastDidSweep=m; if(cur==="tools") renderPanel(); }
+  else if(m.type==="reset_result"){ infoModal(esc(m.label)+" — reset", (m.ok?"✓ ":"✗ ")+esc(m.msg)); }
+  else if(m.type==="recovery_result"){ const rows=(m.results||[]).map(r=>`${r.ok?"✓":"✗"} ${esc(r.label)} — ${esc(r.msg)}`).join("<br>"); infoModal("Recovery — "+esc(m.label), rows||"(no steps)"); }
+  else if(m.type==="ecu_info"){ const info=m.info||{}; const ks=Object.keys(info); const rows=ks.length?ks.map(k=>`<div style="padding:2px 0"><span style="color:var(--faint)">${esc(k)}</span> <span class="mono">${esc(info[k])}</span></div>`).join(""):`<span style="color:var(--faint)">No identification DIDs answered.</span>`; infoModal(esc(m.label)+" — identification", rows); }
   else if(m.type==="export_result"){ m.ok?infoModal("History exported",`Saved to:<br><span class="mono" style="font-size:12px">${esc(m.path)}</span>`):infoModal("Export failed",esc(m.error||"Could not write the export.")); }
   else if(m.type==="import_result"){ m.ok?infoModal("History imported",`Added ${m.scans_added||0} scan${m.scans_added===1?"":"s"} and ${m.events_added||0} event${m.events_added===1?"":"s"}. Existing data was kept.`):infoModal("Import failed",esc(m.error||"That doesn't look like a Fiskeretta history export.")); }
   else if(m.type==="device_picker") showDevicePicker(m.devices||[]);
@@ -383,10 +386,11 @@ function pickLive(){ $("scanMenu").hidden=true; returnToLive(); }
 function pickScan(id){ $("scanMenu").hidden=true; viewingSavedId=id; sendMsg({command:"load_scan", scan_id:id}); }
 function delScan(id){ confirmAction("Delete this saved scan? This can't be undone.", ()=>sendMsg({command:"delete_scan", scan_id:id})); }
 function clearAllScans(){ $("scanMenu").hidden=true; confirmAction(`Delete all ${savedScans.length} saved scan${savedScans.length===1?"":"s"}? This can't be undone.`, ()=>sendMsg({command:"clear_scans"})); }
-function confirmAction(msg,onYes){
+function confirmAction(msg,onYes,yesLabel="Delete",yesClass="danger"){
   const ov=document.createElement("div"); ov.className="cov";
-  ov.innerHTML=`<div class="cbox"><div class="cmsg"></div><div class="cbtns"><button class="btn ghost" data-no>Cancel</button><button class="btn danger" data-yes>Delete</button></div></div>`;
+  ov.innerHTML=`<div class="cbox"><div class="cmsg"></div><div class="cbtns"><button class="btn ghost" data-no>Cancel</button><button class="btn ${yesClass}" data-yes></button></div></div>`;
   ov.querySelector(".cmsg").textContent=msg;
+  ov.querySelector("[data-yes]").textContent=yesLabel;
   ov.querySelector("[data-no]").onclick=()=>ov.remove();
   ov.querySelector("[data-yes]").onclick=()=>{ ov.remove(); onYes(); };
   ov.onclick=(e)=>{ if(e.target===ov) ov.remove(); };
@@ -511,7 +515,9 @@ function panelFaults(tone){
   if(gs.length) out+=COLS+renderGroups(gs,"historical");
   else out+=`<div class="empty">No historical faults stored — only communication codes below.</div>`;
   if(commGs.length){
-    out+=`<div class="fgrp commbar" style="cursor:pointer" onclick="toggleComm()"><span class="gn">${showComm?"▾":"▸"} COMMUNICATION</span><span class="gf">${commCount} network code${commCount===1?"":"s"} · a common occurrence, not a fault unless still active</span></div>`;
+    const secoc=(view&&view.summary&&view.summary.secoc)||0;
+    const secocNote=secoc?` · ${secoc} match the SecOC-strip pattern (CRC / alive-counter / missing-message) — expected, harmless noise on 'ovloop' community firmware`:"";
+    out+=`<div class="fgrp commbar" style="cursor:pointer" onclick="toggleComm()"><span class="gn">${showComm?"▾":"▸"} COMMUNICATION</span><span class="gf">${commCount} network code${commCount===1?"":"s"} · a common occurrence, not a fault unless still active${secocNote}</span></div>`;
     if(showComm) out+=(gs.length?"":COLS)+renderGroups(commGs,"comm");
   }
   return out;
@@ -652,9 +658,37 @@ function panelTools(){
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for extra modules</div><div class="td">A normal scan reads the modules the app already knows about. This sends one quick broadcast to see whether your car has any control units beyond that set — and if it turns up something unknown, it's added to your scan set and you're offered to send it to the developer so it can be identified and added for everyone. Safe; takes a few seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="checkModules()" data-tip="One broadcast that lists every module and flags anything not in the app's database">Check now</button></div></div></div>`;
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Check for generic OBD</div><div class="td">The Ocean speaks manufacturer UDS, not the legislated emissions OBD-II that off-the-shelf scanners rely on — which is why a generic scanner shows almost nothing. This sends the standard OBD-II requests (modes 01 / 09 / 03) to 0x7DF to confirm whether the car answers any of them. Safe; a couple of seconds.</div><div class="toolbtns" style="margin-top:10px"><button class="btn ghost" ${gate()} onclick="startGenericObd()" data-tip="Send legislated OBD-II requests on 0x7DF to see if the car answers">Run probe</button></div>${genericObdResult()}</div></div>`;
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Battery / live-data sweep <span style="font-size:11px;color:var(--faint)">(experimental)</span></div><div class="td">Walks UDS 0x22 data identifiers on the BMS (0x7E1) and lists which respond, with their raw bytes — the groundwork for reading HV state of charge, state of health, cell voltages and temperatures. No public DID list exists for the Ocean, so this discovers them; decoded names show for DIDs we've confirmed. One request per DID, so large ranges are slow — start narrow. Read-only and safe.</div><div class="toolbtns" style="margin-top:10px;align-items:center"><span style="font-size:12px;color:var(--faint)">DIDs (hex)</span><input id="didStart" value="${esc(didRange.start)}" style="width:60px" data-tip="Start DID (hex)"><span style="color:var(--faint)">–</span><input id="didEnd" value="${esc(didRange.end)}" style="width:60px" data-tip="End DID (hex)"><button class="btn ghost" ${gate()} onclick="startBmsSweep()" data-tip="Read every DID in the range from the BMS and list the responders">Sweep</button></div>${didSweepResult()}</div></div>`;
+  h+=ecuToolsCard();
   h+=`<div class="tool"><div style="flex:1"><div class="ti">Data &amp; history</div><div class="td">Your scans and history live in a folder on this computer and survive app updates. Export bundles them into one zip you can back up or move to another machine; import merges a zip back in without overwriting newer data. No connection needed.</div><div class="toolbtns" style="margin-top:10px;gap:8px"><button class="btn ghost" onclick="exportHistory()" data-tip="Save all scans + history to a zip on your Desktop">Export</button><button class="btn ghost" onclick="importHistory()" data-tip="Merge a previously exported history zip">Import</button><button class="btn ghost" onclick="revealFolder()" data-tip="Open the data folder in Finder / Explorer">Reveal data folder</button></div></div></div>`;
   return h;
 }
+function ecuToolsCard(){
+  const flows=[["opd","Clear One-Pedal-Drive"],["can_bus","CAN-bus disturbance"],["deep_12v","After 12V deep-discharge"],["ota_hang","Stuck OTA update"],["climate","Stuck climate / heat-pump"]];
+  const flowBtns=flows.map(([k,lbl])=>`<button class="btn ghost" ${gate()} onclick="runRecovery('${k}')" data-tip="Soft/hard-reset the modules in this recovery sequence">${esc(lbl)}</button>`).join("");
+  const mods=((view&&view.modules)||[]).filter(m=>m.status!=="not_reached");
+  const opts=mods.length?mods.map(m=>`<option value="${esc(m.name)}">${esc(m.label)} (${esc(m.name)})</option>`).join(""):`<option value="">— run a scan first —</option>`;
+  return `<div class="tool"><div style="flex:1"><div class="ti">ECU reset &amp; recovery <span style="font-size:11px;color:var(--faint)">(parked car only)</span></div>`+
+    `<div class="td">Restart one control unit (UDS 0x11 — soft restarts its app layer, hard power-cycles it) or run a pre-canned recovery sequence. No coding or writes; the module just reboots. <b style="color:var(--text)">Use only on a parked car.</b> Each action asks you to confirm. A soft VCU reset is the usual fix for a One-Pedal-Drive drop-out (P1014F2).</div>`+
+    `<div class="toolbtns" style="margin-top:10px;gap:8px;flex-wrap:wrap">${flowBtns}</div>`+
+    `<div class="toolbtns" style="margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap"><select id="ecuSel" style="max-width:240px">${opts}</select>`+
+    `<button class="btn ghost" ${gate()} onclick="ecuReset(false)" data-tip="Soft ECU reset — restart the app layer">Soft reset</button>`+
+    `<button class="btn ghost" ${gate()} onclick="ecuReset(true)" data-tip="Hard ECU reset — full power-cycle">Hard reset</button>`+
+    `<button class="btn ghost" ${gate()} onclick="readEcuInfo()" data-tip="Read VIN / part / SW / HW / serial from this ECU">Read info</button></div></div></div>`;
+}
+function _ecuSel(){ const s=$("ecuSel"); return s&&s.value?{key:s.value,label:s.options[s.selectedIndex].text}:null; }
+function runRecovery(flowKey){
+  if(!connected||busy) return;
+  confirmAction("Run this recovery sequence? Each listed module will reboot (UDS reset). Parked car only.",
+    ()=>sendMsg({command:"recovery_flow",flow:flowKey}),"Run reset","danger");
+}
+function ecuReset(hard){
+  if(!connected||busy) return;
+  const e=_ecuSel(); if(!e) return;
+  confirmAction(`${hard?"Hard":"Soft"}-reset ${e.label}? The module will reboot. Parked car only.`,
+    ()=>sendMsg({command:"ecu_reset",module:e.key,hard:hard}),`${hard?"Hard":"Soft"} reset`,"danger");
+}
+function readEcuInfo(){ if(!connected||busy) return; const e=_ecuSel(); if(e) sendMsg({command:"read_identification",module:e.key}); }
+window.runRecovery=runRecovery;window.ecuReset=ecuReset;window.readEcuInfo=readEcuInfo;
 function exportHistory(){ sendMsg({command:"export_history"}); }
 function revealFolder(){ sendMsg({command:"reveal_folder"}); }
 function importHistory(){
@@ -672,8 +706,8 @@ window.exportHistory=exportHistory;window.revealFolder=revealFolder;window.impor
 function genericObdResult(){
   const g=lastGenericObd; if(!g) return "";
   const verdict=g.generic_obd
-    ? `<span style="color:var(--amber)">Generic OBD present — the car answered a legislated mode.</span>`
-    : `<span style="color:var(--accent)">No generic OBD — confirmed UDS-only.</span>`;
+    ? `<span style="color:var(--amber)">Generic OBD present — the car answered a legislated mode (the Ocean answers a minimal J1979 set via the VCU at 0x7CA).</span>`
+    : `<span style="color:var(--accent)">No legislated mode answered this time — the Ocean normally responds via 0x7CA; check the car is awake (ON/Ready).</span>`;
   const rows=(g.probes||[]).map(p=>`<div style="display:flex;gap:8px;font-size:12px;padding:2px 0;align-items:center"><span style="color:${p.answered?'var(--amber)':'var(--faint)'};width:14px">${p.answered?'●':'○'}</span><span style="flex:1">${esc(p.label)}</span><span style="color:var(--faint)">${p.answered?'answered':'no answer'}</span></div>`).join("");
   return `<div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft)"><div style="font-size:12.5px;margin-bottom:6px">${verdict}</div>${rows}</div>`;
 }
