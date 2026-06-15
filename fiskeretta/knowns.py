@@ -8,6 +8,8 @@ with friendly labels live in uds.MODULES / modules.FRIENDLY; this is the rest
 
 KNOWN_ECUS = [
     {"request_id": 0x742, "response_id": 0x74A, "module_name": 'TBOX_US', "part_number": None},
+    {"request_id": 0x746, "response_id": 0x74E, "module_name": 'EPB', "part_number": None},   # parking brake (from wavestripe routine header)
+    {"request_id": 0x750, "response_id": 0x758, "module_name": 'HVAC', "part_number": None},  # HVAC / heat pump
     {"request_id": 0x752, "response_id": 0x75A, "module_name": 'WTC', "part_number": 'FM2930200055B'},
     {"request_id": 0x780, "response_id": 0x788, "module_name": 'FCM', "part_number": 'FM2980140002H'},
     {"request_id": 0x782, "response_id": 0x78A, "module_name": 'CMRR_FR', "part_number": 'FM2980140080J'},
@@ -32,6 +34,7 @@ KNOWN_ECUS = [
     {"request_id": 0x7D5, "response_id": 0x7DD, "module_name": 'BTC', "part_number": 'FM2930200064B'},
     {"request_id": 0x7E1, "response_id": 0x7E9, "module_name": 'BMS', "part_number": 'FM2915600180G'},
     {"request_id": 0x7E3, "response_id": 0x7EB, "module_name": 'EPS1', "part_number": 'FM2920100001H'},
+    {"request_id": 0x7E6, "response_id": 0x7EE, "module_name": 'OBC', "part_number": None},   # onboard charger (mainly awake while charging)
     {"request_id": 0x7F0, "response_id": 0x7F8, "module_name": 'ECC', "part_number": 'FM2930200180P'},
     # 0x7F1 returned the VIN to an F187 (part-number) read — a VIN-echo artifact,
     # not a real part number. wavestripe doesn't scan it; kept as a target with

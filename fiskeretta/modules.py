@@ -57,6 +57,9 @@ FRIENDLY = {
     "tbox_eu": "Telematics Control Unit (EU)",
     "tbox_us": "Telematics Control Unit (US)",
     "eps1": "Electric Power Steering 1",
+    "epb": "Electronic Parking Brake",
+    "hvac": "HVAC / Heat Pump",
+    "obc": "Onboard Charger",
     # WTC / BTC: addresses confirmed (0x752 / 0x7D5), acronym expansions unverified.
 }
 

@@ -47,6 +47,15 @@ TEST_FAILED = 0x01
 CONFIRMED_DTC = 0x08
 NOTEWORTHY_STATUS_MASK = TEST_FAILED | CONFIRMED_DTC
 
+# SecOC / bus-integrity fault-condition keywords, matched against the DTC catalog
+# description. "ovloop" community firmware strips SecOC message authentication, so
+# codes whose trip condition is a CRC / alive-counter / missing-message / checksum
+# check flood the bus and re-set every ignition cycle with no drivable symptom.
+# is_secoc_pattern flags the *pattern* (firmware-agnostic); whether it is actually
+# noise depends on the car running ovloop.
+_SECOC_KEYWORDS = ("secoc", "alive counter", "alive_counter", "missing message",
+                   "missing_message", "crc", "checksum")
+
 _HEX_PAIR = re.compile(r"[0-9A-Fa-f]{2}")
 _FRAME_LINE = re.compile(r"^[0-9A-Fa-f]+:\s*(.+)$")
 _BARE_HEX = re.compile(r"^[0-9A-Fa-f]+$")
@@ -205,6 +214,15 @@ class Dtc:
         car as modules sleep. Hidden by default in the UI; an actively-failing U
         code stays a real fault (is_failing_now → not comm)."""
         return self.category == "U" and self.is_confirmed and not self.is_failing_now
+
+    @property
+    def is_secoc_pattern(self) -> bool:
+        """Catalog description matches the SecOC-strip pattern (CRC / alive-counter
+        / missing-message / checksum / SecOC). A flood of these with no symptom is
+        expected on 'ovloop' community firmware (SecOC stripped). Needs the DTC
+        catalog; returns False when no description is available."""
+        desc = (self.description or "").lower()
+        return any(k in desc for k in _SECOC_KEYWORDS)
 
     @property
     def description(self) -> Optional[str]:

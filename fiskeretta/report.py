@@ -41,6 +41,7 @@ def _dtc_dict(d: uds.Dtc) -> dict:
         "failing_now": d.is_failing_now,
         "confirmed": d.is_confirmed,
         "tier": "comm" if d.is_comm else "fault",
+        "secoc": d.is_secoc_pattern,
         "description": rec.get("description"),
         "page": rec.get("page"),
         "subsystem": rec.get("subsystem"),
@@ -62,32 +63,36 @@ def build_from_report(report: dict, vehicle: Optional[dict] = None,
     `labels` maps key -> display label; `not_reached_list` is the (key, label)
     list of manual modules not yet discovered."""
     mods = []
-    active_total = historical_total = comm_total = reachable = 0
+    active_total = historical_total = comm_total = secoc_total = reachable = 0
     nr = not_reached_list if not_reached_list is not None else modules.NOT_YET_REACHED
 
     for name, dtcs in report.items():
         lbl = (labels.get(name) if labels else None) or modules.label(name)
         if dtcs is None:
             mods.append({"name": name, "label": lbl, "status": UNREACHABLE,
-                         "counts": {"active": 0, "historical": 0, "comm": 0}, "codes": []})
+                         "counts": {"active": 0, "historical": 0, "comm": 0, "secoc": 0}, "codes": []})
             continue
         reachable += 1
         active = sum(1 for d in dtcs if d.is_failing_now)
         historical = sum(1 for d in dtcs if d.is_confirmed and not d.is_failing_now)
         comm = sum(1 for d in dtcs if d.is_comm)
+        # SecOC-strip noise among the codes that actually show (noteworthy) — the
+        # "N of these are expected ovloop chatter" count the UI surfaces.
+        secoc = sum(1 for d in dtcs if d.is_noteworthy and d.is_secoc_pattern)
         codes = [_dtc_dict(d) for d in dtcs if d.is_noteworthy]
         codes.sort(key=lambda c: (not c["failing_now"], not c["confirmed"], c["code"]))
         status = ACTIVE if active else (HISTORICAL if historical else CLEAR)
         active_total += active
         historical_total += historical
         comm_total += comm
+        secoc_total += secoc
         mods.append({"name": name, "label": lbl, "status": status,
-                     "counts": {"active": active, "historical": historical, "comm": comm},
+                     "counts": {"active": active, "historical": historical, "comm": comm, "secoc": secoc},
                      "codes": codes})
 
     for name, lbl in nr:
         mods.append({"name": name, "label": lbl, "status": NOT_REACHED,
-                     "counts": {"active": 0, "historical": 0, "comm": 0}, "codes": []})
+                     "counts": {"active": 0, "historical": 0, "comm": 0, "secoc": 0}, "codes": []})
 
     mods.sort(key=lambda m: (_TIER_ORDER[m["status"]],
                              -m["counts"]["active"], -m["counts"]["historical"], m["label"]))
@@ -99,6 +104,7 @@ def build_from_report(report: dict, vehicle: Optional[dict] = None,
             "active": active_total,
             "historical": historical_total,
             "comm": comm_total,
+            "secoc": secoc_total,
             "modules_reachable": reachable,
             "modules_total": len(report) + len(nr),
         },

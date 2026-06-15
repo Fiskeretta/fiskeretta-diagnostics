@@ -39,7 +39,9 @@ def test_build_from_report_tiers_and_counts():
     mods = {m["name"]: m for m in res["modules"]}
 
     mcu = mods["mcu_f"]
-    assert mcu["counts"] == {"active": 1, "historical": 2, "comm": 2}
+    assert mcu["counts"]["active"] == 1
+    assert mcu["counts"]["historical"] == 2
+    assert mcu["counts"]["comm"] == 2
     tiers = {c["code"]: c["tier"] for c in mcu["codes"]}
     assert tiers["0xD14987"] == "fault"
     assert tiers["0xD14281"] == "comm"
