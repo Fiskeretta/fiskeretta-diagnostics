@@ -205,6 +205,9 @@ async def _handle(payload, ws, log, send_status, op, spawn) -> None:
         "no_filter": (lambda: run_no_filter(log), "running"),
         "clear_dtcs": (lambda: run_clear_dtcs(ws, log, payload.get("modules", [])), "running"),
         "check_modules": (lambda: run_check_modules(ws, log), "running"),
+        "ecu_reset": (lambda: run_ecu_reset(ws, log, payload.get("module"), bool(payload.get("hard"))), "running"),
+        "recovery_flow": (lambda: run_recovery_flow(ws, log, payload.get("flow")), "running"),
+        "read_identification": (lambda: run_read_identification(ws, log, payload.get("module")), "running"),
     }
     entry = long_ops.get(command)
     if entry:
@@ -562,6 +565,82 @@ async def run_bms_sweep(ws, log, payload) -> None:
     if not ws.closed:
         await ws.send_json({"type": "did_sweep", "module": f"0x{req:03X}",
                             "start": f"{start:04X}", "end": f"{end:04X}", "rows": rows})
+
+
+# Pre-canned multi-ECU reset sequences (registry keys). Each step is (key, hard).
+# Safe-tier: ECU reset (0x11) only — no writes/coding. Gated to a parked car + a
+# UI confirm because a reset momentarily reboots the module.
+RECOVERY_FLOWS = {
+    "opd":      ("Clear One-Pedal-Drive (soft-reset VCU)", [("gateway", False)]),
+    "can_bus":  ("CAN-bus disturbance (soft-reset VCU, BCM, EPS, ESP, BMS)",
+                 [("gateway", False), ("bcm", False), ("eps1", False), ("esp", False), ("bms", False)]),
+    "deep_12v": ("After 12 V deep-discharge (VCU + BMS soft, ICC hard)",
+                 [("gateway", False), ("bms", False), ("icc", True)]),
+    "ota_hang": ("Stuck OTA update (ICC + T-Box hard)", [("icc", True), ("tbox_eu", True)]),
+    "climate":  ("Stuck climate / heat-pump (ECC + HVAC hard)", [("ecc", True), ("hvac", True)]),
+}
+
+
+async def run_ecu_reset(ws, log, module_key, hard: bool) -> None:
+    """Soft/hard reset one ECU (UDS 0x11). The UI gates this behind a confirm; a
+    reset momentarily reboots the module, so it must only run on a parked car."""
+    t = registry.scan_targets().get(module_key)
+    if not t or not t.get("response"):
+        log(f"Unknown module '{module_key}'.")
+        return
+    log(f"{'Hard' if hard else 'Soft'} reset {t['label']} (0x{t['request']:03X})…")
+    ok, msg = await _manager.run(
+        lambda s: uds.ecu_reset(s, t["request"], t["response"], hard=hard, log=log))
+    log(f"  {t['label']}: {msg}")
+    if not ws.closed:
+        await ws.send_json({"type": "reset_result", "module": module_key,
+                            "label": t["label"], "ok": ok, "msg": msg})
+
+
+async def run_recovery_flow(ws, log, flow_key) -> None:
+    """Run a pre-canned reset sequence; report each step. One connection, resets
+    serialized with a short settle between so each ECU is back before the next."""
+    flow = RECOVERY_FLOWS.get(flow_key)
+    if not flow:
+        return
+    label, steps = flow
+    log(f"Recovery flow — {label}")
+    targets = registry.scan_targets()
+    results = []
+
+    async def _do(s):
+        for key, hard in steps:
+            t = targets.get(key)
+            if not t or not t.get("response"):
+                results.append({"module": key, "label": key.upper(), "ok": False, "msg": "unknown module"})
+                continue
+            log(f"  {'Hard' if hard else 'Soft'} reset {t['label']}…")
+            try:
+                ok, msg = await uds.ecu_reset(s, t["request"], t["response"], hard=hard, log=log)
+            except Exception as exc:  # never let one step abort the sequence
+                ok, msg = False, str(exc)
+            log(f"    {t['label']}: {msg}")
+            results.append({"module": key, "label": t["label"], "ok": ok, "msg": msg})
+            await asyncio.sleep(0.4)  # let the ECU come back before the next step
+
+    await _manager.run(_do)
+    if not ws.closed:
+        await ws.send_json({"type": "recovery_result", "flow": flow_key,
+                            "label": label, "results": results})
+
+
+async def run_read_identification(ws, log, module_key) -> None:
+    """Read VIN/part/SW/HW/supplier/serial from one ECU (UDS 0x22)."""
+    t = registry.scan_targets().get(module_key)
+    if not t or not t.get("response"):
+        log(f"Unknown module '{module_key}'.")
+        return
+    log(f"Reading identification from {t['label']} (0x{t['request']:03X})…")
+    info = await _manager.run(
+        lambda s: uds.read_identification(s, t["request"], t["response"], log))
+    if not ws.closed:
+        await ws.send_json({"type": "ecu_info", "module": module_key,
+                            "label": t["label"], "info": info})
 
 
 async def run_monitor(ws, log, seconds: int = 10) -> None:

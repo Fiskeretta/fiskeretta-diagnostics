@@ -378,6 +378,75 @@ async def read_all_dtcs(session: ElmSession, log: Optional[Log] = None, targets:
     return report
 
 
+async def ecu_reset(session: ElmSession, request_id: int, response_id: int,
+                    hard: bool = False, log: Optional[Log] = None, attempts: int = 4) -> tuple:
+    """UDS 0x11 ECUReset on one module — soft (sub 0x03, application-layer restart)
+    or hard (sub 0x01, full power-cycle reinit). Returns (ok, message); never raises.
+
+    A reset momentarily reboots the ECU, so callers must gate it to a parked car.
+    No SecurityAccess is needed, but some modules require an extended session — we
+    try 0x10 0x03 once on a real NRC. NRC 0x78 (responsePending) is an ACK, not a
+    rejection; we wait and re-read."""
+    sub = 0x01 if hard else 0x03
+    await configure_addressing(session, request_id, response_id, log)
+    request = f"11{sub:02X}"
+    tried_extended = False
+    last = "no response"
+    for _ in range(attempts):
+        try:
+            reply = await session.send(request, timeout=8.0)
+        except asyncio.TimeoutError:
+            last = "timeout"
+            continue
+        up = reply.upper()
+        payload = _extract_payload_bytes(reply)
+        if payload and payload[0] == 0x11 + POSITIVE_RESPONSE_OFFSET:  # 0x51 — accepted
+            return True, "reset accepted"
+        if len(payload) >= 3 and payload[0] == 0x7F and payload[1] == 0x11:
+            nrc = payload[2]
+            if nrc == 0x78:                 # responsePending — ACK, module finishing
+                last = "pending"
+                await asyncio.sleep(0.5)
+                continue
+            if not tried_extended:          # real NRC — try an extended session once
+                tried_extended = True
+                try:
+                    await session.send("1003", timeout=5.0)
+                except asyncio.TimeoutError:
+                    pass
+                last = f"NRC 0x{nrc:02X}"
+                continue
+            return False, f"rejected (NRC 0x{nrc:02X})"
+        if any(err in up for err in _ADAPTER_ERRORS):  # NO DATA / ERROR — often transient
+            last = f"adapter: {reply.strip()!r}"
+            await asyncio.sleep(0.3)
+            continue
+        return False, f"unexpected: {payload.hex() if payload else reply.strip()!r}"
+    return False, last
+
+
+# ECU identification DIDs to read for a "Read info" action (label -> DID).
+_IDENT_READ = [("vin", 0xF190), ("part_number", 0xF187), ("software", 0xF188),
+               ("hardware", 0xF191), ("supplier", 0xF18A), ("serial", 0xF18C)]
+
+
+async def read_identification(session: ElmSession, request_id: int, response_id: int,
+                              log: Optional[Log] = None) -> dict:
+    """Read the standard identification DIDs (VIN/part/SW/HW/supplier/serial) from
+    one ECU via UDS 0x22. Returns {field: ascii-string} for every DID that answered;
+    missing/again-negative DIDs are simply omitted. Never raises."""
+    out: dict = {}
+    for field, did in _IDENT_READ:
+        try:
+            data = await read_data_by_identifier(session, request_id, response_id, did, log)
+        except (UdsError, asyncio.TimeoutError):
+            continue
+        text = _decode_ascii(data)
+        if text:
+            out[field] = text
+    return out
+
+
 async def clear_dtcs(session: ElmSession, request_id: int, response_id: int,
                      log: Optional[Log] = None, attempts: int = 6) -> tuple:
     """UDS 0x14 ClearDiagnosticInformation for all DTC groups (0xFFFFFF) on one
